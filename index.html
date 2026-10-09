@@ -1,0 +1,419 @@
+<!doctype html>
+<html lang="uk">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Реєстр договорів оренди</title>
+  <style>
+    :root {
+      font-family: Arial, sans-serif;
+      color: #202938;
+      background: #f5f7fa;
+    }
+
+    * { box-sizing: border-box; }
+
+    body { margin: 0; }
+
+    .page {
+      padding: 28px;
+      max-width: 100%;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 25px;
+    }
+
+    .subtitle {
+      margin: 0 0 22px;
+      color: #657184;
+      font-size: 14px;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+    }
+
+    .toolbar input,
+    .toolbar select {
+      height: 40px;
+      padding: 0 12px;
+      border: 1px solid #d3dae4;
+      border-radius: 8px;
+      background: white;
+      color: #202938;
+      font: inherit;
+    }
+
+    .toolbar input {
+      width: min(360px, 100%);
+    }
+
+    .count {
+      margin-left: auto;
+      color: #657184;
+      font-size: 13px;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 180px);
+      border: 1px solid #dce2ea;
+      border-radius: 10px;
+      background: white;
+    }
+
+    table {
+      border-collapse: separate;
+      border-spacing: 0;
+      white-space: nowrap;
+      font-size: 13px;
+    }
+
+    th, td {
+      height: 43px;
+      padding: 9px 12px;
+      border-right: 1px solid #e8ecf1;
+      border-bottom: 1px solid #e8ecf1;
+      text-align: left;
+      background: white;
+    }
+
+    thead th {
+      position: sticky;
+      z-index: 3;
+      background: #e9eef5;
+      font-weight: 600;
+    }
+
+    thead tr:first-child th { top: 0; height: 43px; }
+    thead tr:nth-child(2) th { top: 43px; height: 39px; background: #f2f5f9; }
+
+    .group-heading {
+      padding: 0;
+      background: #e9eef5;
+    }
+
+    .group-heading button {
+      width: 100%;
+      height: 43px;
+      padding: 0 12px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .group-heading button:hover { background: #dde6f0; }
+
+    .fixed-id,
+    .fixed-tt,
+    .fixed-address {
+      position: sticky;
+      z-index: 2;
+      background: white;
+    }
+
+    thead .fixed-id,
+    thead .fixed-tt,
+    thead .fixed-address {
+      z-index: 5;
+      background: #e9eef5;
+    }
+
+    .fixed-id { left: 0; min-width: 115px; width: 115px; }
+    .fixed-tt { left: 115px; min-width: 85px; width: 85px; }
+    .fixed-address {
+      left: 200px;
+      min-width: 280px;
+      width: 280px;
+      max-width: 280px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      box-shadow: 5px 0 9px -8px #526071;
+    }
+
+    .data-col { min-width: 190px; max-width: 360px; }
+    tbody tr:hover td { background: #f7faff; }
+    tbody tr:hover .fixed-id,
+    tbody tr:hover .fixed-tt,
+    tbody tr:hover .fixed-address { background: #f7faff; }
+
+    .status {
+      display: inline-block;
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .status.active { color: #17663d; background: #e5f5eb; }
+    .status.review { color: #935c08; background: #fff2d7; }
+    .status.expired { color: #a23030; background: #fde9e9; }
+
+    .empty {
+      padding: 26px;
+      color: #657184;
+      text-align: center;
+    }
+
+    @media (max-width: 700px) {
+      .page { padding: 14px; }
+      h1 { font-size: 21px; }
+      .count { margin-left: 0; width: 100%; }
+      .table-wrap { max-height: calc(100vh - 215px); }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <h1>Реєстр договорів оренди</h1>
+    <p class="subtitle">Демонстрація вигляду таблиці. Дані договорів підключимо окремим кроком.</p>
+
+    <div class="toolbar">
+      <input id="search" type="search" placeholder="Пошук за ID, ТТ, адресою, сторонами">
+      <select id="statusFilter" aria-label="Статус договору">
+        <option value="">Усі статуси</option>
+        <option value="active">Діючі</option>
+        <option value="review">Потребують звірки</option>
+        <option value="expired">Строк минув</option>
+      </select>
+      <span class="count" id="count"></span>
+    </div>
+
+    <div class="table-wrap">
+      <table id="registry" aria-label="Реєстр договорів оренди">
+        <thead></thead>
+        <tbody></tbody>
+      </table>
+      <div class="empty" id="empty" hidden>За цим відбором договорів немає.</div>
+    </div>
+  </main>
+
+  <script>
+    const groups = [
+      {
+        id: "contract",
+        title: "Договір",
+        summary: "contractSummary",
+        fields: [
+          ["number", "№ договору"],
+          ["type", "Вид"],
+          ["statusText", "Статус"]
+        ]
+      },
+      {
+        id: "parties",
+        title: "Сторони",
+        summary: "partiesSummary",
+        fields: [
+          ["landlord", "Орендодавець"],
+          ["tenant", "Орендар"]
+        ]
+      },
+      {
+        id: "terms",
+        title: "Строки",
+        summary: "termsSummary",
+        fields: [
+          ["signed", "Підписано"],
+          ["started", "Початок"],
+          ["ends", "Закінчення"],
+          ["renewal", "Продовження"]
+        ]
+      },
+      {
+        id: "payment",
+        title: "Оплата",
+        summary: "paymentSummary",
+        fields: [
+          ["rent", "Оренда за місяць"],
+          ["f1", "Ф1"],
+          ["f2", "Ф2"],
+          ["due", "Строк оплати"]
+        ]
+      },
+      {
+        id: "contacts",
+        title: "Контакти",
+        summary: "contactsSummary",
+        fields: [
+          ["contact", "Контакт"],
+          ["phone", "Телефон"],
+          ["shift", "Перенесення платежу"]
+        ]
+      },
+      {
+        id: "other",
+        title: "Інші умови",
+        summary: "otherSummary",
+        fields: [
+          ["utilities", "Комунальні"],
+          ["power", "Потужність"]
+        ]
+      },
+      {
+        id: "documents",
+        title: "Документи",
+        summary: "documentsSummary",
+        fields: [
+          ["agreements", "Додаткові угоди"],
+          ["verification", "Звірка зі сканом"]
+        ]
+      }
+    ];
+
+    // Лише вигадані приклади для перевірки інтерфейсу.
+    const demoRows = [
+      {
+        id: "DEMO-001", tt: "[101]", address: "м. Київ, вул. Прикладна, 10",
+        status: "active", statusText: "Діючий", number: "01/26", type: "оренда",
+        contractSummary: "01/26 · діючий",
+        landlord: "ФОП Приклад А.", tenant: "ТОВ «Мережа»",
+        partiesSummary: "ФОП Приклад А. / ТОВ «Мережа»",
+        signed: "15.01.2026", started: "01.02.2026", ends: "31.01.2028",
+        renewal: "Повідомити за 30 днів", termsSummary: "До 31.01.2028",
+        rent: "80 000 грн", f1: "50 000 грн", f2: "30 000 грн",
+        due: "До 5-го за поточний", paymentSummary: "80 000 грн · до 5-го",
+        contact: "Олена", phone: "—", shift: "Лише після погодження",
+        contactsSummary: "Олена · погоджувати перенесення",
+        utilities: "Окрема компенсація", power: "15 кВт",
+        otherSummary: "Комунальні окремо",
+        agreements: "ДУ №1", verification: "Не звірено",
+        documentsSummary: "ДУ №1 · не звірено"
+      },
+      {
+        id: "DEMO-002", tt: "[102]", address: "м. Біла Церква, вул. Тестова, 4",
+        status: "review", statusText: "Потребує звірки", number: "07/24",
+        type: "суборенда", contractSummary: "07/24 · звірити",
+        landlord: "ТОВ «Приклад»", tenant: "ТОВ «Мережа»",
+        partiesSummary: "ТОВ «Приклад» / ТОВ «Мережа»",
+        signed: "20.07.2024", started: "01.08.2024", ends: "31.10.2026",
+        renewal: "Уточнити пролонгацію", termsSummary: "До 31.10.2026 · звірити",
+        rent: "65 000 грн", f1: "65 000 грн", f2: "—",
+        due: "До 20-го за наступний", paymentSummary: "65 000 грн · до 20-го",
+        contact: "Бухгалтерія", phone: "—", shift: "Не переносити",
+        contactsSummary: "Бухгалтерія · не переносити",
+        utilities: "Входять в оренду", power: "—",
+        otherSummary: "Комунальні входять",
+        agreements: "—", verification: "Не звірено",
+        documentsSummary: "Не звірено"
+      }
+    ];
+
+    const expanded = new Set();
+    const thead = document.querySelector("#registry thead");
+    const tbody = document.querySelector("#registry tbody");
+    const search = document.querySelector("#search");
+    const statusFilter = document.querySelector("#statusFilter");
+    const count = document.querySelector("#count");
+    const empty = document.querySelector("#empty");
+
+    function cell(tag, value, className = "") {
+      const element = document.createElement(tag);
+      element.textContent = value ?? "—";
+      element.className = className;
+      return element;
+    }
+
+    function render() {
+      const firstHeadRow = document.createElement("tr");
+      const secondHeadRow = document.createElement("tr");
+
+      [
+        ["ID договору", "fixed-id"],
+        ["Код ТТ", "fixed-tt"],
+        ["Адреса", "fixed-address"]
+      ].forEach(([label, className]) => {
+        const th = cell("th", label, className);
+        th.rowSpan = 2;
+        firstHeadRow.append(th);
+      });
+
+      groups.forEach(group => {
+        const isExpanded = expanded.has(group.id);
+        const th = document.createElement("th");
+        th.className = "group-heading";
+        th.colSpan = isExpanded ? group.fields.length : 1;
+
+        const button = document.createElement("button");
+        button.type = "button";
+        button.textContent = `${isExpanded ? "▾" : "▸"} ${group.title}`;
+        button.setAttribute("aria-expanded", String(isExpanded));
+        button.addEventListener("click", () => {
+          if (isExpanded) expanded.delete(group.id);
+          else expanded.add(group.id);
+          render();
+        });
+
+        th.append(button);
+        firstHeadRow.append(th);
+
+        const visibleFields = isExpanded
+          ? group.fields
+          : [[group.summary, "Коротко"]];
+
+        visibleFields.forEach(([, label]) => {
+          secondHeadRow.append(cell("th", label, "data-col"));
+        });
+      });
+
+      thead.replaceChildren(firstHeadRow, secondHeadRow);
+
+      const query = search.value.trim().toLocaleLowerCase("uk");
+      const selectedStatus = statusFilter.value;
+      const visibleRows = demoRows.filter(row => {
+        const matchesStatus = !selectedStatus || row.status === selectedStatus;
+        const matchesSearch = !query || Object.values(row)
+          .some(value => String(value).toLocaleLowerCase("uk").includes(query));
+        return matchesStatus && matchesSearch;
+      });
+
+      const fragment = document.createDocumentFragment();
+
+      visibleRows.forEach(row => {
+        const tr = document.createElement("tr");
+        tr.append(
+          cell("td", row.id, "fixed-id"),
+          cell("td", row.tt, "fixed-tt"),
+          cell("td", row.address, "fixed-address")
+        );
+
+        groups.forEach(group => {
+          const keys = expanded.has(group.id)
+            ? group.fields.map(([key]) => key)
+            : [group.summary];
+
+          keys.forEach(key => {
+            const td = cell("td", row[key], "data-col");
+            if (key === "statusText") {
+              td.textContent = "";
+              const badge = cell("span", row[key], `status ${row.status}`);
+              td.append(badge);
+            }
+            tr.append(td);
+          });
+        });
+
+        fragment.append(tr);
+      });
+
+      tbody.replaceChildren(fragment);
+      count.textContent = `Показано ${visibleRows.length} із ${demoRows.length}`;
+      empty.hidden = visibleRows.length !== 0;
+    }
+
+    search.addEventListener("input", render);
+    statusFilter.addEventListener("change", render);
+    render();
+  </script>
+</body>
+</html>
