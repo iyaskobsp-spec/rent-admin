@@ -88,6 +88,31 @@ app.get("/api/db-health", async (req, res, next) => {
   }
 });
 
+app.get("/api/contracts", async (req, res, next) => {
+  try {
+    if (!pool) {
+      return res.status(503).json({
+        ok: false,
+        error: "База даних не підключена"
+      });
+    }
+
+    const result = await pool.query(`
+      SELECT *
+      FROM rent_contracts
+      ORDER BY id ASC
+    `);
+
+    res.json({
+      ok: true,
+      total: result.rowCount,
+      contracts: result.rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use((error, req, res, next) => {
   console.error(error);
 
