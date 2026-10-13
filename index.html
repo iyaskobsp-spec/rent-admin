@@ -73,6 +73,29 @@
       <div class="empty" id="empty" hidden>За цим відбором договорів немає.</div>
     </div>
     </section>
+
+    <div id="contractModal" class="contract-modal" hidden>
+      <div class="contract-modal-backdrop" data-close-contract></div>
+      <section class="contract-dialog" role="dialog" aria-modal="true" aria-labelledby="contractModalTitle" tabindex="-1">
+        <header class="contract-dialog-header">
+          <div>
+            <h2 id="contractModalTitle">Договір</h2>
+            <span id="contractModalStatus" class="contract-modal-status"></span>
+          </div>
+          <button id="closeContractBtn" class="contract-close" type="button" aria-label="Закрити">×</button>
+        </header>
+        <nav class="contract-tabs" aria-label="Розділи картки договору">
+          <button type="button" class="is-active" data-contract-tab="main">Загальна інформація</button>
+          <button type="button" data-contract-tab="documents">Документи</button>
+          <button type="button" data-contract-tab="history">Історія змін</button>
+        </nav>
+        <div class="contract-dialog-content" id="contractModalContent"></div>
+        <footer class="contract-dialog-footer">
+          <button id="contractDoneBtn" type="button" class="contract-secondary-btn">Закрити</button>
+          <span class="contract-readonly-note">Редагування підключимо наступним етапом</span>
+        </footer>
+      </section>
+    </div>
   </main>
 
   <script>
@@ -222,6 +245,16 @@
 
       visibleRows.forEach(row => {
         const tr = document.createElement("tr");
+        tr.classList.add("contract-clickable-row");
+        tr.tabIndex = 0;
+        tr.setAttribute("aria-label", `Відкрити договір ${row.id}`);
+        tr.addEventListener("click", () => openContract(row.id));
+        tr.addEventListener("keydown", event => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            openContract(row.id);
+          }
+        });
         tr.append(
           cell("td", row.id, "fixed-id"),
           cell("td", row.tt, "fixed-tt"),
@@ -395,6 +428,142 @@
       };
     }
 
+    let contractsRaw = new Map();
+    const contractModal = document.querySelector("#contractModal");
+    const contractDialog = document.querySelector(".contract-dialog");
+    const contractModalContent = document.querySelector("#contractModalContent");
+    let contractSelected = null;
+    let contractPreviousFocus = null;
+
+    function contractText(value) {
+      if (value === undefined || value === null || value === "") return "—";
+      return String(value);
+    }
+
+    function addContractSection(title, items) {
+      const section = document.createElement("section");
+      section.className = "contract-info-card";
+      const heading = document.createElement("h3");
+      heading.textContent = title;
+      const body = document.createElement("dl");
+      for (const [label, rawValue] of items) {
+        const dt = document.createElement("dt");
+        const dd = document.createElement("dd");
+        dt.textContent = label;
+        dd.textContent = rawValue instanceof Date ? formatDate(rawValue.toISOString()) : contractText(rawValue);
+        body.append(dt, dd);
+      }
+      section.append(heading, body);
+      return section;
+    }
+
+    function addContractObjectSection(title, object) {
+      const entries = Object.entries(object || {}).filter(([, value]) => value !== null && value !== "");
+      return addContractSection(title, entries.length ? entries : [["Відомості", "Не заповнено"]]);
+    }
+
+    function renderContractTab(tab) {
+      if (!contractSelected) return;
+      contractModalContent.replaceChildren();
+      document.querySelectorAll("[data-contract-tab]").forEach(button => {
+        button.classList.toggle("is-active", button.dataset.contractTab === tab);
+      });
+      if (tab === "documents") {
+        contractModalContent.append(addContractSection("Посилання на документи", [
+          ["Папка зі сканами", contractSelected.folder_url || "Не вказано"],
+          ["Статус перевірки", contractSelected.verification_status]
+        ]));
+        if (contractSelected.folder_url && /^https:\/\//i.test(contractSelected.folder_url)) {
+          const link = document.createElement("a");
+          link.className = "contract-folder-link";
+          link.href = contractSelected.folder_url;
+          link.target = "_blank";
+          link.rel = "noopener noreferrer";
+          link.textContent = "Відкрити папку документів ↗";
+          contractModalContent.append(link);
+        }
+      } else if (tab === "history") {
+        contractModalContent.append(addContractSection("Історія змін", [
+          ["Стан", "Історія змін поки не підключена"]
+        ]));
+      } else {
+        const c = contractSelected;
+        const grid = document.createElement("div");
+        grid.className = "contract-info-grid";
+        grid.append(
+          addContractSection("Основні дані", [
+            ["ID договору", c.id], ["Код ТТ", c.tt_code],
+            ["№ договору", c.contract_number], ["Вид", c.contract_type],
+            ["Об’єкт", c.object_name], ["Адреса", c.address],
+            ["Площа, м²", c.area_sqm], ["Статус", c.contract_status],
+            ["Перевірка", c.verification_status]
+          ]),
+          addContractSection("Сторони", [
+            ["Орендодавець", c.landlord], ["Орендар", c.tenant]
+          ]),
+          addContractSection("Строки", [
+            ["Підписано", formatDate(c.signed_date)],
+            ["Початок", formatDate(c.start_date)],
+            ["Відкриття ТТ", formatDate(c.opening_date)],
+            ["Закінчення", formatDate(c.end_date)],
+            ["Пролонгація", c.renewal_terms]
+          ]),
+          addContractObjectSection("Оплата та гарантійні платежі", c.payment_terms),
+          addContractObjectSection("Контакти та реквізити", c.contacts),
+          addContractObjectSection("Критичні умови", c.critical_terms),
+          addContractSection("Додаткова інформація", [
+            ["Права на приміщення", c.property_rights],
+            ["Примітки", c.notes]
+          ])
+        );
+        contractModalContent.append(grid);
+      }
+    }
+
+    function openContract(id) {
+      const contract = contractsRaw.get(id);
+      if (!contract) return;
+      contractPreviousFocus = document.activeElement;
+      contractSelected = contract;
+      document.querySelector("#contractModalTitle").textContent = id;
+      document.querySelector("#contractModalStatus").textContent = contract.contract_status || "Статус не вказано";
+      renderContractTab("main");
+      contractModal.hidden = false;
+      document.body.classList.add("contract-modal-open");
+      contractDialog.focus();
+    }
+
+    function closeContract() {
+      contractModal.hidden = true;
+      document.body.classList.remove("contract-modal-open");
+      contractSelected = null;
+      if (contractPreviousFocus && contractPreviousFocus.isConnected) contractPreviousFocus.focus();
+    }
+
+    document.querySelector("#closeContractBtn").addEventListener("click", closeContract);
+    document.querySelector("#contractDoneBtn").addEventListener("click", closeContract);
+    document.querySelector("[data-close-contract]").addEventListener("click", closeContract);
+    document.querySelectorAll("[data-contract-tab]").forEach(button => {
+      button.addEventListener("click", () => renderContractTab(button.dataset.contractTab));
+    });
+    document.addEventListener("keydown", event => {
+      if (contractModal.hidden) return;
+      if (event.key === "Escape") closeContract();
+      if (event.key === "Tab") {
+        const focusables = [...contractDialog.querySelectorAll("button:not(:disabled), a[href]")]
+          .filter(el => el.getClientRects().length);
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
+
     let contractsLoaded = false;
 
     async function loadContracts() {
@@ -412,6 +581,7 @@
         }
 
         registryRows = data.contracts.map(mapContract);
+        contractsRaw = new Map(data.contracts.map(contract => [contract.id, contract]));
         contractsLoaded = true;
         render();
         result.textContent = `У реєстрі ${registryRows.length} договорів.`;
