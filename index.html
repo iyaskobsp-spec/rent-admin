@@ -8,15 +8,46 @@
 </head>
 <body>
   <main class="page">
-    <h1>Реєстр договорів оренди</h1>
-    <p class="subtitle">Договори, умови оренди та контроль строків в одному реєстрі.</p>
+    <section id="moduleHome" class="module-home">
+      <h1>Управління орендою</h1>
+      <p class="subtitle">Реєстр договорів, бюджет та планування платежів</p>
+      <div class="module-grid">
+        <button class="module-card" id="openRegistryBtn" type="button">
+          <span class="module-card-icon">▤</span>
+          <span class="module-card-content">
+            <strong>Реєстр договорів</strong>
+            <span>Перегляд умов, пошук, фільтри, імпорт та експорт</span>
+            <small>Відкрити модуль →</small>
+          </span>
+          <span class="module-card-state available">Активний</span>
+        </button>
+        <div class="module-card is-disabled" aria-disabled="true">
+          <span class="module-card-icon">▥</span>
+          <span class="module-card-content">
+            <strong>Бюджет</strong>
+            <span>Планування витрат по місяцях з урахуванням підвищень</span>
+            <small>У розробці</small>
+          </span>
+        </div>
+        <div class="module-card is-disabled" aria-disabled="true">
+          <span class="module-card-icon">▦</span>
+          <span class="module-card-content">
+            <strong>Платіжний календар</strong>
+            <span>Тижневе навантаження, пріоритети, квоти та факт оплат</span>
+            <small>У розробці</small>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section id="registryModule" hidden>
+      <button id="backToModulesBtn" class="back-to-modules" type="button">← До модулів</button>
+      <h1>Реєстр договорів оренди</h1>
+      <p class="subtitle">Договори, умови оренди та контроль строків в одному реєстрі.</p>
 
     <div id="importPanel">
       <input id="excelFile" type="file" accept=".xlsx">
       <input id="importToken" type="password" placeholder="Ключ імпорту" autocomplete="off">
-      <button id="loadContractsBtn" type="button">
-        Завантажити реєстр
-      </button>      
       <button id="importExcelBtn" type="button">
         Імпортувати Excel
       </button>
@@ -41,6 +72,7 @@
       </table>
       <div class="empty" id="empty" hidden>За цим відбором договорів немає.</div>
     </div>
+    </section>
   </main>
 
   <script>
@@ -113,44 +145,6 @@
           ["agreements", "Додаткові угоди"],
           ["verification", "Звірка зі сканом"]
         ]
-      }
-    ];
-
-    // Лише вигадані приклади для перевірки інтерфейсу.
-    const demoRows = [
-      {
-        id: "DEMO-001", tt: "[101]", address: "м. Київ, вул. Прикладна, 10",
-        status: "active", statusText: "Діючий", number: "01/26", type: "оренда",
-        contractSummary: "01/26 · діючий",
-        landlord: "ФОП Приклад А.", tenant: "ТОВ «Мережа»",
-        partiesSummary: "ФОП Приклад А. / ТОВ «Мережа»",
-        signed: "15.01.2026", started: "01.02.2026", ends: "31.01.2028",
-        renewal: "Повідомити за 30 днів", termsSummary: "До 31.01.2028",
-        rent: "80 000 грн", f1: "50 000 грн", f2: "30 000 грн",
-        due: "До 5-го за поточний", paymentSummary: "80 000 грн · до 5-го",
-        contact: "Олена", phone: "—", shift: "Лише після погодження",
-        contactsSummary: "Олена · погоджувати перенесення",
-        utilities: "Окрема компенсація", power: "15 кВт",
-        otherSummary: "Комунальні окремо",
-        agreements: "ДУ №1", verification: "Не звірено",
-        documentsSummary: "ДУ №1 · не звірено"
-      },
-      {
-        id: "DEMO-002", tt: "[102]", address: "м. Біла Церква, вул. Тестова, 4",
-        status: "review", statusText: "Потребує звірки", number: "07/24",
-        type: "суборенда", contractSummary: "07/24 · звірити",
-        landlord: "ТОВ «Приклад»", tenant: "ТОВ «Мережа»",
-        partiesSummary: "ТОВ «Приклад» / ТОВ «Мережа»",
-        signed: "20.07.2024", started: "01.08.2024", ends: "31.10.2026",
-        renewal: "Уточнити пролонгацію", termsSummary: "До 31.10.2026 · звірити",
-        rent: "65 000 грн", f1: "65 000 грн", f2: "—",
-        due: "До 20-го за наступний", paymentSummary: "65 000 грн · до 20-го",
-        contact: "Бухгалтерія", phone: "—", shift: "Не переносити",
-        contactsSummary: "Бухгалтерія · не переносити",
-        utilities: "Входять в оренду", power: "—",
-        otherSummary: "Комунальні входять",
-        agreements: "—", verification: "Не звірено",
-        documentsSummary: "Не звірено"
       }
     ];
 
@@ -401,30 +395,16 @@
       };
     }
 
-    document.querySelector("#loadContractsBtn").addEventListener("click", async () => {
-      const tokenInput = document.querySelector("#importToken");
-      const token = tokenInput.value.trim();
+    let contractsLoaded = false;
+
+    async function loadContracts() {
       const result = document.querySelector("#importResult");
-      const button = document.querySelector("#loadContractsBtn");
-
-      if (!token) {
-        result.textContent = "Введіть ключ доступу до реєстру.";
-        return;
-      }
-
-      button.disabled = true;
-      result.textContent = "Завантаження реєстру...";
+      result.textContent = "Оновлюємо реєстр...";
 
       try {
         const response = await fetch(
-          "https://rent-admin-production.up.railway.app/api/contracts",
-          {
-            headers: {
-              "x-import-token": token
-            }
-          }
+          "https://rent-admin-production.up.railway.app/api/contracts"
         );
-
         const data = await response.json();
 
         if (!response.ok || !data.ok) {
@@ -432,19 +412,25 @@
         }
 
         registryRows = data.contracts.map(mapContract);
+        contractsLoaded = true;
         render();
-
-        result.textContent =
-          `Реєстр завантажено: ${registryRows.length} договорів.`;
-
+        result.textContent = `У реєстрі ${registryRows.length} договорів.`;
       } catch (error) {
         result.textContent = "Помилка: " + error.message;
-      } finally {
-        tokenInput.value = "";
-        button.disabled = false;
       }
+    }
+
+    document.querySelector("#openRegistryBtn").addEventListener("click", () => {
+      document.querySelector("#moduleHome").hidden = true;
+      document.querySelector("#registryModule").hidden = false;
+      if (!contractsLoaded) loadContracts();
     });
-    
+
+    document.querySelector("#backToModulesBtn").addEventListener("click", () => {
+      document.querySelector("#registryModule").hidden = true;
+      document.querySelector("#moduleHome").hidden = false;
+    });
+
     search.addEventListener("input", render);
     statusFilter.addEventListener("change", render);
     render();
