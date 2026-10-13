@@ -139,10 +139,18 @@
         title: "Оплата",
         summary: "paymentSummary",
         fields: [
-          ["rent", "Оренда за місяць"],
-          ["f1", "Ф1"],
-          ["f2", "Ф2"],
-          ["due", "Строк оплати"]
+          ["f1", "Ф1, грн"],
+          ["f2", "Ф2, грн"],
+          ["rentTotal", "Разом, грн"]
+        ]
+      },
+      {
+        id: "paymentNotes",
+        title: "Примітки по оплатах",
+        summary: "paymentNotesSummary",
+        fields: [
+          ["rent", "Орендна плата (джерело)"],
+          ["paymentNotes", "Умови та примітки"]
         ]
       },
       {
@@ -361,6 +369,27 @@
 
     function mapContract(c) {
       const payment = c.payment_terms || {};
+      const moneyFormat = new Intl.NumberFormat("uk-UA", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+      });
+
+      const f1Amount = c.rent_f1 === null || c.rent_f1 === undefined
+        ? null
+        : Number(c.rent_f1);
+
+      const f2Amount = c.rent_f2 === null || c.rent_f2 === undefined
+        ? null
+        : Number(c.rent_f2);
+
+      const rentTotal = f1Amount === null && f2Amount === null
+        ? null
+        : (f1Amount ?? 0) + (f2Amount ?? 0);
+
+      const formatMoney = amount =>
+        amount === null || !Number.isFinite(amount)
+          ? "—"
+          : moneyFormat.format(amount);      
       const contacts = c.contacts || {};
       const critical = c.critical_terms || {};
 
@@ -412,10 +441,25 @@
         termsSummary: `До ${formatDate(c.end_date)}`,
 
         rent,
-        f1,
-        f2: [f2tt, f2cash].filter(v => v !== "—").join(" / ") || "—",
+        f1: formatMoney(f1Amount),
+        f2: formatMoney(f2Amount),
+        rentTotal: formatMoney(rentTotal),
         due,
-        paymentSummary: `${rent} · ${due}`,
+        paymentSummary: formatMoney(rentTotal),
+
+        paymentNotes: Object.entries(payment)
+          .filter(([key, value]) =>
+            key !== "Орендна плата (джерело)" &&
+            value !== null &&
+            value !== undefined &&
+            value !== ""
+          )
+          .map(([key, value]) => `${key}: ${value}`)
+          .join("\n") || "—",
+
+        paymentNotesSummary: due !== "—"
+          ? `Оплата: ${due}`
+          : "Переглянути умови",
 
         contact,
         phone,
