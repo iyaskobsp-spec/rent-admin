@@ -564,6 +564,52 @@ app.post(
   }
 );
 
+app.get("/api/contracts/:id/history", async (req, res, next) => {
+  try {
+    if (!pool) {
+      return res.status(503).json({
+        ok: false,
+        error: "База даних не підключена"
+      });
+    }
+
+    const id = req.params.id;
+
+    if (!/^CTR-\d{4}$/.test(id)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний ID договору"
+      });
+    }
+
+    const result = await pool.query(
+      `
+        SELECT
+          id,
+          contract_id,
+          field_name,
+          old_value,
+          new_value,
+          changed_at
+        FROM rent_contract_history
+        WHERE contract_id = $1
+        ORDER BY changed_at DESC, id DESC
+      `,
+      [id]
+    );
+
+    res.json({
+      ok: true,
+      contract_id: id,
+      total: result.rowCount,
+      history: result.rows
+    });
+
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.patch("/api/contracts/:id", async (req, res, next) => {
   const crypto = require("node:crypto");
   const token = process.env.RENT_IMPORT_TOKEN;
