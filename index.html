@@ -683,15 +683,52 @@
             minute: "2-digit"
           });
 
-          container.append(
-            addContractSection(
-              `${fieldNames[item.field_name] || item.field_name} · ${dateText}`,
-              [
-                ["Було", displayValue(item.old_value)],
-                ["Стало", displayValue(item.new_value)]
-              ]
-            )
-          );
+          const oldValue = item.old_value;
+          const newValue = item.new_value;
+
+          const isObjectChange =
+            oldValue !== null &&
+            newValue !== null &&
+            typeof oldValue === "object" &&
+            typeof newValue === "object" &&
+            !Array.isArray(oldValue) &&
+            !Array.isArray(newValue);
+
+          if (isObjectChange) {
+            const keys = new Set([
+              ...Object.keys(oldValue),
+              ...Object.keys(newValue)
+            ]);
+
+            for (const key of keys) {
+              const before = oldValue[key] ?? null;
+              const after = newValue[key] ?? null;
+
+              if (JSON.stringify(before) === JSON.stringify(after)) {
+                continue;
+              }
+
+              container.append(
+                addContractSection(
+                  `${fieldNames[item.field_name] || item.field_name} · ${key} · ${dateText}`,
+                  [
+                    ["Було", displayValue(before)],
+                    ["Стало", displayValue(after)]
+                  ]
+                )
+              );
+            }
+          } else {
+            container.append(
+              addContractSection(
+                `${fieldNames[item.field_name] || item.field_name} · ${dateText}`,
+                [
+                  ["Було", displayValue(oldValue)],
+                  ["Стало", displayValue(newValue)]
+                ]
+              )
+            );
+          }
         }
 
       } catch (error) {
