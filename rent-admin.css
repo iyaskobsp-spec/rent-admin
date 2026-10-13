@@ -376,3 +376,78 @@ button.module-card:hover {
     padding: 21px;
   }
 }
+
+/* Редагування договору */
+
+.contract-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 13px;
+  font-size: 12px;
+  color: #64758b;
+}
+
+.contract-edit-field input,
+.contract-edit-field textarea,
+#contractEditToken {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #233247;
+  font: inherit;
+  font-size: 13px;
+}
+
+.contract-edit-field textarea {
+  min-height: 75px;
+  resize: vertical;
+}
+
+.contract-edit-field input:focus,
+.contract-edit-field textarea:focus {
+  outline: none;
+  border-color: #5889ca;
+  box-shadow: 0 0 0 3px rgba(78, 122, 185, .12);
+}
+
+.contract-primary-btn {
+  padding: 10px 20px;
+  border: 0;
+  border-radius: 9px;
+  background: #2468c0;
+  color: white;
+  font-weight: 600;
+}
+
+.contract-primary-btn:disabled {
+  opacity: .55;
+  cursor: wait;
+}
+
+#contractEditToken {
+  width: 170px;
+}
+
+.contract-edit-message {
+  flex: 1;
+  font-size: 12px;
+  color: #526b87;
+}
+
+.contract-dialog-footer [hidden],
+.contract-tabs[hidden] {
+  display: none !important;
+}
+
+@media (max-width: 650px) {
+  .contract-dialog-footer {
+    flex-wrap: wrap;
+  }
+
+  #contractEditToken {
+    width: 100%;
+  }
+}
