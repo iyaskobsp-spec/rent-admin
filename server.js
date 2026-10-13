@@ -8,6 +8,14 @@ const { Pool } = require("pg");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
+console.log("DATABASE DIAGNOSTICS:", {
+  hasDatabaseUrl: Boolean(process.env.DATABASE_URL),
+  hasPublicUrl: Boolean(process.env.DATABASE_PUBLIC_URL),
+  railwayService: process.env.RAILWAY_SERVICE_NAME || "unknown",
+  railwayEnvironment: process.env.RAILWAY_ENVIRONMENT_NAME || "unknown",
+  deploymentId: process.env.RAILWAY_DEPLOYMENT_ID || "unknown"
+});
+
 const allowedOrigins = [
   "https://iyaskobsp-spec.github.io",
   "http://localhost:5500",
