@@ -451,3 +451,24 @@ button.module-card:hover {
     width: 100%;
   }
 }
+
+/* Стабільне розташування вкладок модалки */
+
+.contract-dialog-header,
+.contract-tabs,
+.contract-dialog-footer {
+  flex-shrink: 0;
+}
+
+.contract-dialog-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.contract-tabs {
+  min-height: 45px;
+  position: relative;
+  z-index: 2;
+  background: #fff;
+}
