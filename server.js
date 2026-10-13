@@ -780,6 +780,14 @@ async function initializeDatabase() {
     `);
 
     await pool.query(`
+      ALTER TABLE rent_contracts
+        ADD COLUMN IF NOT EXISTS rent_f1 NUMERIC(14,2),
+        ADD COLUMN IF NOT EXISTS rent_f2 NUMERIC(14,2);
+    `);
+
+    console.log("DATABASE RENT FIELDS: ready");    
+
+    await pool.query(`
       CREATE TABLE IF NOT EXISTS rent_contract_history (
         id BIGSERIAL PRIMARY KEY,
         contract_id VARCHAR(30) NOT NULL
