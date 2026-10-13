@@ -564,6 +564,122 @@ app.post(
   }
 );
 
+app.patch("/api/contracts/:id", async (req, res, next) => {
+  const crypto = require("node:crypto");
+  const token = process.env.RENT_IMPORT_TOKEN;
+  const supplied = req.get("x-import-token") || "";
+
+  if (!token) {
+    return res.status(503).json({
+      ok: false,
+      error: "Ключ редагування не налаштований"
+    });
+  }
+
+  const expected = Buffer.from(token);
+  const received = Buffer.from(supplied);
+
+  if (
+    expected.length !== received.length ||
+    !crypto.timingSafeEqual(expected, received)
+  ) {
+    return res.status(403).json({
+      ok: false,
+      error: "Доступ до редагування заборонено"
+    });
+  }
+
+  if (!pool) {
+    return res.status(503).json({
+      ok: false,
+      error: "База даних не підключена"
+    });
+  }
+
+  const id = req.params.id;
+
+  if (!/^CTR-\d{4}$/.test(id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний ID договору"
+    });
+  }
+
+  const allowedFields = [
+    "tt_code", "contract_number", "contract_type",
+    "object_name", "address", "landlord", "tenant",
+    "signed_date", "start_date", "opening_date",
+    "end_date", "contract_status", "renewal_terms",
+    "area_sqm", "property_rights", "folder_url",
+    "verification_status", "contacts",
+    "payment_terms", "critical_terms", "notes"
+  ];
+
+  const jsonFields = new Set([
+    "contacts", "payment_terms", "critical_terms"
+  ]);
+
+  const updates = [];
+  const values = [];
+
+  for (const field of allowedFields) {
+    if (!Object.prototype.hasOwnProperty.call(req.body, field)) {
+      continue;
+    }
+
+    let value = req.body[field];
+
+    if (jsonFields.has(field)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        return res.status(400).json({
+          ok: false,
+          error: `Некоректне значення поля ${field}`
+        });
+      }
+
+      value = JSON.stringify(value);
+    } else if (value === "") {
+      value = null;
+    }
+
+    values.push(value);
+    updates.push(`${field} = $${values.length}`);
+  }
+
+  if (!updates.length) {
+    return res.status(400).json({
+      ok: false,
+      error: "Немає даних для оновлення"
+    });
+  }
+
+  values.push(id);
+
+  try {
+    const result = await pool.query(
+      `UPDATE rent_contracts
+       SET ${updates.join(", ")}, updated_at = NOW()
+       WHERE id = $${values.length}
+       RETURNING *`,
+      values
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({
+        ok: false,
+        error: "Договір не знайдено"
+      });
+    }
+
+    res.json({
+      ok: true,
+      contract: result.rows[0]
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.use((error, req, res, next) => {
   console.error(error);
 
