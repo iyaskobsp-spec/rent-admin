@@ -100,6 +100,55 @@ app.use((error, req, res, next) => {
   });
 });
 
+async function initializeDatabase() {
+  if (!pool) {
+    console.error("DATABASE_URL відсутня");
+    return;
+  }
+
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS rent_contracts (
+        id VARCHAR(30) PRIMARY KEY,
+        tt_code TEXT,
+        contract_number TEXT,
+        contract_type TEXT,
+        object_name TEXT,
+        address TEXT,
+        landlord TEXT,
+        tenant TEXT,
+        signed_date DATE,
+        start_date DATE,
+        opening_date DATE,
+        end_date DATE,
+        contract_status TEXT,
+        renewal_terms TEXT,
+        area_sqm NUMERIC(12,2),
+        property_rights TEXT,
+        folder_url TEXT,
+        verification_status TEXT,
+
+        source_row INTEGER,
+        tt_code_source TEXT,
+
+        contacts JSONB NOT NULL DEFAULT '{}'::jsonb,
+        payment_terms JSONB NOT NULL DEFAULT '{}'::jsonb,
+        critical_terms JSONB NOT NULL DEFAULT '{}'::jsonb,
+
+        notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+    `);
+
+    console.log("DATABASE TABLES: rent_contracts ready");
+  } catch (error) {
+    console.error("DATABASE INIT ERROR:", error.message);
+  }
+}
+
+initializeDatabase();
+
 const server = app.listen(PORT, () => {
   console.log(`Rent Admin API запущено на порті ${PORT}`);
 });
