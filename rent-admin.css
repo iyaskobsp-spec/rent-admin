@@ -202,7 +202,19 @@ h1 { margin: 0 0 7px; font-size: 24px; font-weight: 700; letter-spacing: -.45px;
 .contract-modal[hidden] { display: none !important; }
 .contract-modal { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 18px; }
 .contract-modal-backdrop { position: absolute; inset: 0; background: rgba(24, 39, 62, .54); }
-.contract-dialog { position: relative; display: flex; flex-direction: column; width: min(850px, 100%); max-height: min(90vh, 980px); overflow: hidden; border-radius: 18px; background: white; box-shadow: 0 24px 85px rgba(12, 29, 55, .25); outline: none; }
+.contract-dialog {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: min(850px, 100%);
+  height: min(90vh, 980px);
+  max-height: 980px;
+  overflow: hidden;
+  border-radius: 18px;
+  background: white;
+  box-shadow: 0 24px 85px rgba(12, 29, 55, .25);
+  outline: none;
+}
 .contract-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 23px 28px 12px; }
 .contract-dialog-header h2 { display: inline-block; margin: 0 12px 0 0; font-size: 25px; color: #1b2e49; }
 .contract-modal-status { display: inline-block; padding: 5px 10px; border-radius: 30px; background: #e6f4ed; color: #246b49; font-size: 12px; font-weight: 650; }
