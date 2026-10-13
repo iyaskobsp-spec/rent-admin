@@ -90,30 +90,6 @@ app.get("/api/db-health", async (req, res, next) => {
 
 app.get("/api/contracts", async (req, res, next) => {
   try {
-    const crypto = require("node:crypto");
-    const token = process.env.RENT_IMPORT_TOKEN;
-    const supplied = req.get("x-import-token") || "";
-
-    if (!token) {
-      return res.status(503).json({
-        ok: false,
-        error: "Ключ доступу не налаштований"
-      });
-    }
-
-    const expected = Buffer.from(token);
-    const received = Buffer.from(supplied);
-
-    if (
-      expected.length !== received.length ||
-      !crypto.timingSafeEqual(expected, received)
-    ) {
-      return res.status(403).json({
-        ok: false,
-        error: "Доступ заборонено"
-      });
-    }
-
     if (!pool) {
       return res.status(503).json({
         ok: false,
