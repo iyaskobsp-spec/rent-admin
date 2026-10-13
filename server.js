@@ -733,6 +733,76 @@ async function initializeDatabase() {
       );
     `);
 
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS rent_contract_history (
+        id BIGSERIAL PRIMARY KEY,
+        contract_id VARCHAR(30) NOT NULL
+          REFERENCES rent_contracts(id),
+        field_name TEXT NOT NULL,
+        old_value JSONB,
+        new_value JSONB,
+        changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rent_history_contract
+        ON rent_contract_history(contract_id, changed_at DESC);
+
+      CREATE OR REPLACE FUNCTION log_rent_contract_changes()
+      RETURNS TRIGGER AS $$
+      DECLARE
+        field_record RECORD;
+        old_data JSONB;
+        new_data JSONB;
+      BEGIN
+        old_data := to_jsonb(OLD) - 'updated_at' - 'created_at';
+        new_data := to_jsonb(NEW) - 'updated_at' - 'created_at';
+
+        FOR field_record IN
+          SELECT
+            n.key,
+            o.value AS previous_value,
+            n.value AS current_value
+          FROM jsonb_each(new_data) n
+          JOIN jsonb_each(old_data) o ON o.key = n.key
+          WHERE o.value IS DISTINCT FROM n.value
+        LOOP
+          INSERT INTO rent_contract_history (
+            contract_id,
+            field_name,
+            old_value,
+            new_value
+          )
+          VALUES (
+            NEW.id,
+            field_record.key,
+            field_record.previous_value,
+            field_record.current_value
+          );
+        END LOOP;
+
+        RETURN NEW;
+      END;
+      $$ LANGUAGE plpgsql;
+
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_trigger
+          WHERE tgname = 'rent_contract_audit_trigger'
+            AND tgrelid = 'rent_contracts'::regclass
+        ) THEN
+          CREATE TRIGGER rent_contract_audit_trigger
+          AFTER UPDATE ON rent_contracts
+          FOR EACH ROW
+          EXECUTE FUNCTION log_rent_contract_changes();
+        END IF;
+      END;
+      $$;
+    `);
+
+    console.log("DATABASE HISTORY: ready");    
+
     console.log("DATABASE TABLES: rent_contracts ready");
   } catch (error) {
     console.error("DATABASE INIT ERROR:", error.message);
