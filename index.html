@@ -92,7 +92,11 @@
         <div class="contract-dialog-content" id="contractModalContent"></div>
         <footer class="contract-dialog-footer">
           <button id="contractDoneBtn" type="button" class="contract-secondary-btn">Закрити</button>
-          <span class="contract-readonly-note">Редагування підключимо наступним етапом</span>
+          <span id="contractEditMessage" class="contract-edit-message" role="status"></span>
+          <input id="contractEditToken" type="password" placeholder="Ключ редагування" autocomplete="off" hidden>
+          <button id="contractCancelEditBtn" class="contract-secondary-btn" type="button" hidden>Скасувати зміни</button>
+          <button id="contractEditBtn" class="contract-primary-btn" type="button">Редагувати</button>
+          <button id="contractSaveBtn" class="contract-primary-btn" type="button" hidden>Зберегти</button>
         </footer>
       </section>
     </div>
@@ -434,6 +438,138 @@
     const contractModalContent = document.querySelector("#contractModalContent");
     let contractSelected = null;
     let contractPreviousFocus = null;
+    let contractEditing = false;
+
+    const editSections = [
+      ["Основні дані", [
+        ["tt_code", "Код ТТ"], ["contract_number", "№ договору"],
+        ["contract_type", "Вид"], ["object_name", "Об’єкт"],
+        ["address", "Адреса"], ["area_sqm", "Площа, м²"],
+        ["contract_status", "Статус"], ["verification_status", "Перевірка"]
+      ]],
+      ["Сторони", [["landlord", "Орендодавець"], ["tenant", "Орендар"]]],
+      ["Строки", [
+        ["signed_date", "Підписано"], ["start_date", "Початок"],
+        ["opening_date", "Відкриття ТТ"], ["end_date", "Закінчення"],
+        ["renewal_terms", "Пролонгація"]
+      ]],
+      ["Додаткова інформація", [
+        ["property_rights", "Права на приміщення"], ["folder_url", "Папка документів"],
+        ["notes", "Примітки"]
+      ]]
+    ];
+
+    function editField(container, key, label, value, group = "") {
+      const wrap = document.createElement("label");
+      wrap.className = "contract-edit-field";
+      const caption = document.createElement("span");
+      caption.textContent = label;
+      const large = String(value ?? "").length > 90 || /address|notes|renewal_terms/.test(key);
+      const input = large ? document.createElement("textarea") : document.createElement("input");
+      if (!large) input.type = /_date$/.test(key) ? "date" : key === "area_sqm" ? "number" : "text";
+      if (key === "area_sqm") input.step = "0.01";
+      input.value = /_date$/.test(key) && value ? String(value).slice(0, 10) : String(value ?? "");
+      input.dataset.editField = key;
+      if (group) input.dataset.editGroup = group;
+      wrap.append(caption, input);
+      container.append(wrap);
+    }
+
+    function renderContractEditor() {
+      const c = contractSelected;
+      contractModalContent.replaceChildren();
+      const grid = document.createElement("div");
+      grid.className = "contract-info-grid";
+      for (const [title, fields] of editSections) {
+        const section = document.createElement("section");
+        section.className = "contract-info-card";
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        section.append(heading);
+        for (const [key, label] of fields) editField(section, key, label, c[key]);
+        grid.append(section);
+      }
+      for (const [key, title] of [
+        ["payment_terms", "Оплата та гарантійні платежі"],
+        ["contacts", "Контакти та реквізити"],
+        ["critical_terms", "Критичні умови"]
+      ]) {
+        const section = document.createElement("section");
+        section.className = "contract-info-card";
+        const heading = document.createElement("h3");
+        heading.textContent = title;
+        section.append(heading);
+        for (const [name, value] of Object.entries(c[key] || {})) {
+          editField(section, name, name, value, key);
+        }
+        grid.append(section);
+      }
+      contractModalContent.append(grid);
+    }
+
+    function setEditing(next) {
+      contractEditing = next;
+      document.querySelector("#contractEditBtn").hidden = next;
+      document.querySelector("#contractSaveBtn").hidden = !next;
+      document.querySelector("#contractCancelEditBtn").hidden = !next;
+      document.querySelector("#contractEditToken").hidden = !next;
+      document.querySelector("#contractDoneBtn").hidden = next;
+      document.querySelector(".contract-tabs").hidden = next;
+      document.querySelector("#contractEditMessage").textContent = "";
+      if (next) renderContractEditor();
+      else renderContractTab("main");
+    }
+
+    async function saveContractEdit() {
+      const tokenInput = document.querySelector("#contractEditToken");
+      const message = document.querySelector("#contractEditMessage");
+      const button = document.querySelector("#contractSaveBtn");
+      const token = tokenInput.value.trim();
+      if (!token) { message.textContent = "Введіть ключ редагування."; return; }
+      const changes = {};
+      const grouped = {};
+      for (const input of contractModalContent.querySelectorAll("[data-edit-field]")) {
+        const key = input.dataset.editField;
+        const group = input.dataset.editGroup;
+        const value = input.value.trim();
+        if (group) {
+          if (!grouped[group]) grouped[group] = { ...(contractSelected[group] || {}) };
+          grouped[group][key] = value || null;
+        } else if (key === "area_sqm") {
+          if (value && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
+            message.textContent = "Перевірте площу приміщення.";
+            return;
+          }
+          changes[key] = value ? Number(value) : null;
+        } else {
+          changes[key] = value || null;
+        }
+      }
+      Object.assign(changes, grouped);
+      button.disabled = true;
+      message.textContent = "Зберігаємо...";
+      try {
+        const response = await fetch(
+          `https://rent-admin-production.up.railway.app/api/contracts/${encodeURIComponent(contractSelected.id)}`,
+          { method: "PATCH", headers: { "Content-Type": "application/json", "x-import-token": token }, body: JSON.stringify(changes) }
+        );
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || "Помилка збереження");
+        contractSelected = result.contract;
+        contractsRaw.set(result.contract.id, result.contract);
+        registryRows = [...contractsRaw.values()].map(mapContract);
+        document.querySelector("#contractModalStatus").textContent = result.contract.contract_status || "Статус не вказано";
+        tokenInput.value = "";
+        setEditing(false);
+        render();
+        message.textContent = "Зміни збережено в базі.";
+      } catch (error) {
+        message.textContent = `Помилка: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
 
     function contractText(value) {
       if (value === undefined || value === null || value === "") return "—";
@@ -525,6 +661,7 @@
       if (!contract) return;
       contractPreviousFocus = document.activeElement;
       contractSelected = contract;
+      setEditing(false);
       document.querySelector("#contractModalTitle").textContent = id;
       document.querySelector("#contractModalStatus").textContent = contract.contract_status || "Статус не вказано";
       renderContractTab("main");
@@ -537,9 +674,14 @@
       contractModal.hidden = true;
       document.body.classList.remove("contract-modal-open");
       contractSelected = null;
+      contractEditing = false;
+      document.querySelector("#contractEditToken").value = "";
       if (contractPreviousFocus && contractPreviousFocus.isConnected) contractPreviousFocus.focus();
     }
 
+    document.querySelector("#contractEditBtn").addEventListener("click", () => setEditing(true));
+    document.querySelector("#contractCancelEditBtn").addEventListener("click", () => setEditing(false));
+    document.querySelector("#contractSaveBtn").addEventListener("click", saveContractEdit);
     document.querySelector("#closeContractBtn").addEventListener("click", closeContract);
     document.querySelector("#contractDoneBtn").addEventListener("click", closeContract);
     document.querySelector("[data-close-contract]").addEventListener("click", closeContract);
@@ -548,7 +690,10 @@
     });
     document.addEventListener("keydown", event => {
       if (contractModal.hidden) return;
-      if (event.key === "Escape") closeContract();
+      if (event.key === "Escape") {
+        if (contractEditing) setEditing(false);
+        else closeContract();
+      }
       if (event.key === "Tab") {
         const focusables = [...contractDialog.querySelectorAll("button:not(:disabled), a[href]")]
           .filter(el => el.getClientRects().length);
