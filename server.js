@@ -113,6 +113,160 @@ app.get("/api/contracts", async (req, res, next) => {
   }
 });
 
+app.post("/api/contracts/import", express.json({ limit: "5mb" }), async (req, res, next) => {
+  const importToken = process.env.RENT_IMPORT_TOKEN;
+  const suppliedToken = req.get("x-import-token");
+
+  if (!importToken) {
+    return res.status(503).json({
+      ok: false,
+      error: "Ключ імпорту не налаштований"
+    });
+  }
+
+  const crypto = require("node:crypto");
+  const expected = Buffer.from(importToken);
+  const received = Buffer.from(suppliedToken || "");
+
+  if (
+    expected.length !== received.length ||
+    !crypto.timingSafeEqual(expected, received)
+  ) {
+    return res.status(403).json({
+      ok: false,
+      error: "Доступ до імпорту заборонено"
+    });
+  }
+
+  if (!pool) {
+    return res.status(503).json({
+      ok: false,
+      error: "База даних не підключена"
+    });
+  }
+
+  const contracts = req.body?.contracts;
+
+  if (
+    !Array.isArray(contracts) ||
+    contracts.length === 0 ||
+    contracts.length > 500
+  ) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний список договорів"
+    });
+  }
+
+  const ids = new Set();
+
+  for (const contract of contracts) {
+    if (
+      !contract ||
+      typeof contract.id !== "string" ||
+      !/^CTR-\d{4}$/.test(contract.id) ||
+      ids.has(contract.id)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний або повторний ID договору"
+      });
+    }
+
+    ids.add(contract.id);
+  }
+
+  const fields = [
+    "id",
+    "tt_code",
+    "contract_number",
+    "contract_type",
+    "object_name",
+    "address",
+    "landlord",
+    "tenant",
+    "signed_date",
+    "start_date",
+    "opening_date",
+    "end_date",
+    "contract_status",
+    "renewal_terms",
+    "area_sqm",
+    "property_rights",
+    "folder_url",
+    "verification_status",
+    "source_row",
+    "tt_code_source",
+    "contacts",
+    "payment_terms",
+    "critical_terms",
+    "notes"
+  ];
+
+  const jsonFields = new Set([
+    "contacts",
+    "payment_terms",
+    "critical_terms"
+  ]);
+
+  const columns = fields.join(", ");
+  const placeholders = fields.map(
+    (_, index) => `$${index + 1}`
+  ).join(", ");
+
+  const query = `
+    INSERT INTO rent_contracts (${columns})
+    VALUES (${placeholders})
+    ON CONFLICT (id) DO NOTHING
+  `;
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    let imported = 0;
+    let skipped = 0;
+
+    for (const contract of contracts) {
+      const values = fields.map(field => {
+        const value = contract[field];
+
+        if (jsonFields.has(field)) {
+          return JSON.stringify(value ?? {});
+        }
+
+        return value === undefined || value === ""
+          ? null
+          : value;
+      });
+
+      const result = await client.query(query, values);
+
+      if (result.rowCount === 1) {
+        imported++;
+      } else {
+        skipped++;
+      }
+    }
+
+    await client.query("COMMIT");
+
+    return res.json({
+      ok: true,
+      received: contracts.length,
+      imported,
+      skipped,
+      total: imported + skipped
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 app.use((error, req, res, next) => {
   console.error(error);
 
