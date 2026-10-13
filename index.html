@@ -4,193 +4,23 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Реєстр договорів оренди</title>
-  <style>
-    :root {
-      font-family: Arial, sans-serif;
-      color: #202938;
-      background: #f5f7fa;
-    }
-
-    * { box-sizing: border-box; }
-
-    body { margin: 0; }
-
-    .page {
-      padding: 28px;
-      max-width: 100%;
-    }
-
-    h1 {
-      margin: 0 0 6px;
-      font-size: 25px;
-    }
-
-    .subtitle {
-      margin: 0 0 22px;
-      color: #657184;
-      font-size: 14px;
-    }
-
-    .toolbar {
-      display: flex;
-      gap: 10px;
-      align-items: center;
-      flex-wrap: wrap;
-      margin-bottom: 14px;
-    }
-
-    .toolbar input,
-    .toolbar select {
-      height: 40px;
-      padding: 0 12px;
-      border: 1px solid #d3dae4;
-      border-radius: 8px;
-      background: white;
-      color: #202938;
-      font: inherit;
-    }
-
-    .toolbar input {
-      width: min(360px, 100%);
-    }
-
-    .count {
-      margin-left: auto;
-      color: #657184;
-      font-size: 13px;
-    }
-
-    .table-wrap {
-      overflow: auto;
-      max-height: calc(100vh - 180px);
-      border: 1px solid #dce2ea;
-      border-radius: 10px;
-      background: white;
-    }
-
-    table {
-      border-collapse: separate;
-      border-spacing: 0;
-      white-space: nowrap;
-      font-size: 13px;
-    }
-
-    th, td {
-      height: 43px;
-      padding: 9px 12px;
-      border-right: 1px solid #e8ecf1;
-      border-bottom: 1px solid #e8ecf1;
-      text-align: left;
-      background: white;
-    }
-
-    thead th {
-      position: sticky;
-      z-index: 3;
-      background: #e9eef5;
-      font-weight: 600;
-    }
-
-    thead tr:first-child th { top: 0; height: 43px; }
-    thead tr:nth-child(2) th { top: 43px; height: 39px; background: #f2f5f9; }
-
-    .group-heading {
-      padding: 0;
-      background: #e9eef5;
-    }
-
-    .group-heading button {
-      width: 100%;
-      height: 43px;
-      padding: 0 12px;
-      border: 0;
-      background: transparent;
-      color: inherit;
-      text-align: left;
-      font: inherit;
-      font-weight: 700;
-      cursor: pointer;
-    }
-
-    .group-heading button:hover { background: #dde6f0; }
-
-    .fixed-id,
-    .fixed-tt,
-    .fixed-address {
-      position: sticky;
-      z-index: 2;
-      background: white;
-    }
-
-    thead .fixed-id,
-    thead .fixed-tt,
-    thead .fixed-address {
-      z-index: 5;
-      background: #e9eef5;
-    }
-
-    .fixed-id { left: 0; min-width: 115px; width: 115px; }
-    .fixed-tt { left: 115px; min-width: 85px; width: 85px; }
-    .fixed-address {
-      left: 200px;
-      min-width: 280px;
-      width: 280px;
-      max-width: 280px;
-      overflow: hidden;
-      text-overflow: ellipsis;
-      box-shadow: 5px 0 9px -8px #526071;
-    }
-
-    .data-col { min-width: 190px; max-width: 360px; }
-    tbody tr:hover td { background: #f7faff; }
-    tbody tr:hover .fixed-id,
-    tbody tr:hover .fixed-tt,
-    tbody tr:hover .fixed-address { background: #f7faff; }
-
-    .status {
-      display: inline-block;
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-weight: 600;
-    }
-
-    .status.active { color: #17663d; background: #e5f5eb; }
-    .status.review { color: #935c08; background: #fff2d7; }
-    .status.expired { color: #a23030; background: #fde9e9; }
-
-    .empty {
-      padding: 26px;
-      color: #657184;
-      text-align: center;
-    }
-
-    @media (max-width: 700px) {
-      .page { padding: 14px; }
-      h1 { font-size: 21px; }
-      .count { margin-left: 0; width: 100%; }
-      .table-wrap { max-height: calc(100vh - 215px); }
-    }
-  </style>
+  <link rel="stylesheet" href="rent-admin.css">
 </head>
 <body>
   <main class="page">
     <h1>Реєстр договорів оренди</h1>
-    <p class="subtitle">Демонстрація вигляду таблиці. Дані договорів підключимо окремим кроком.</p>
+    <p class="subtitle">Договори, умови оренди та контроль строків в одному реєстрі.</p>
 
-    <div id="importPanel" style="display:flex; flex-wrap:wrap; align-items:center; gap:10px; margin-bottom:18px; padding:16px; background:white; border:1px solid #dce2ea; border-radius:10px;">
-      <input id="excelFile" type="file" accept=".xlsx" style="max-width:300px;">
-      <input id="importToken" type="password" placeholder="Ключ імпорту" autocomplete="off"
-        style="height:40px; padding:0 12px; border:1px solid #d3dae4; border-radius:8px;">
-      <button id="loadContractsBtn" type="button"
-        style="height:40px; padding:0 18px; background:#17663d; color:white; border:0; border-radius:8px; cursor:pointer;">
+    <div id="importPanel">
+      <input id="excelFile" type="file" accept=".xlsx">
+      <input id="importToken" type="password" placeholder="Ключ імпорту" autocomplete="off">
+      <button id="loadContractsBtn" type="button">
         Завантажити реєстр
       </button>      
-      <button id="importExcelBtn" type="button"
-        style="height:40px; padding:0 18px; background:#24364b; color:white; border:0; border-radius:8px; cursor:pointer;">
+      <button id="importExcelBtn" type="button">
         Імпортувати Excel
       </button>
-      <span id="importResult" role="status" aria-live="polite" style="font-size:13px; color:#657184;"></span>
+      <span id="importResult" role="status" aria-live="polite"></span>
     </div>
     
     <div class="toolbar">
