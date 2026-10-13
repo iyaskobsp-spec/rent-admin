@@ -232,3 +232,147 @@ h1 { margin: 0 0 7px; font-size: 24px; font-weight: 700; letter-spacing: -.45px;
   .contract-tabs { padding-left: 16px; padding-right: 16px; }
   .contract-info-grid { grid-template-columns: 1fr; }
 }
+
+/* ==========================================
+   ГОЛОВНА СТОРІНКА: МОДУЛІ АДМІНКИ
+   ========================================== */
+
+#moduleHome {
+  max-width: 1200px;
+  margin: 25px auto;
+}
+
+#moduleHome[hidden],
+#registryModule[hidden] {
+  display: none !important;
+}
+
+.module-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  margin-top: 28px;
+}
+
+.module-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  position: relative;
+  gap: 16px;
+  min-height: 220px;
+  padding: 26px;
+  border: 1px solid #dce5f0;
+  border-radius: 18px;
+  background: #ffffff;
+  box-shadow: 0 5px 22px rgba(29, 48, 79, 0.055);
+  color: #233247;
+  text-align: left;
+  transition: transform .2s, box-shadow .2s, border-color .2s;
+}
+
+button.module-card:hover {
+  transform: translateY(-3px);
+  border-color: #9db8d9;
+  box-shadow: 0 12px 28px rgba(29, 48, 79, 0.11);
+}
+
+.module-card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  border-radius: 13px;
+  background: #e9f1fc;
+  color: #2462ae;
+  font-size: 27px;
+}
+
+.module-card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.module-card-content strong {
+  font-size: 18px;
+  font-weight: 700;
+  color: #203956;
+}
+
+.module-card-content > span {
+  color: #64758b;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.module-card-content small {
+  margin-top: 8px;
+  color: #2462ae;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.module-card-state {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  padding: 5px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.module-card-state.available {
+  background: #e4f5eb;
+  color: #187046;
+}
+
+.module-card.is-disabled {
+  background: #f9fbfd;
+  border-color: #e8edf4;
+  box-shadow: none;
+  cursor: default;
+}
+
+.module-card.is-disabled .module-card-icon {
+  background: #edf0f4;
+  color: #91a0b2;
+}
+
+.module-card.is-disabled .module-card-content small {
+  color: #96a3b4;
+}
+
+.back-to-modules {
+  margin-bottom: 18px;
+  padding: 10px 16px;
+  border: 1px solid #d7e1ed;
+  border-radius: 9px;
+  background: #ffffff;
+  color: #294667;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.back-to-modules:hover {
+  background: #edf3fa;
+}
+
+@media (max-width: 950px) {
+  .module-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 600px) {
+  .module-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .module-card {
+    min-height: 185px;
+    padding: 21px;
+  }
+}
