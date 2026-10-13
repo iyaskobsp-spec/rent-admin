@@ -564,6 +564,181 @@ app.post(
   }
 );
 
+app.post(
+  "/api/contracts/update-rent",
+  excelUpload.single("file"),
+  async (req, res, next) => {
+    const crypto = require("node:crypto");
+    const token = process.env.RENT_IMPORT_TOKEN;
+    const supplied = req.get("x-import-token") || "";
+
+    if (!token) {
+      return res.status(503).json({
+        ok: false,
+        error: "Ключ імпорту не налаштовано"
+      });
+    }
+
+    const a = Buffer.from(token);
+    const b = Buffer.from(supplied);
+
+    if (
+      a.length !== b.length ||
+      !crypto.timingSafeEqual(a, b)
+    ) {
+      return res.status(403).json({
+        ok: false,
+        error: "Доступ заборонено"
+      });
+    }
+
+    if (!pool || !req.file) {
+      return res.status(400).json({
+        ok: false,
+        error: "Немає підключення до БД або файла"
+      });
+    }
+
+    try {
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(req.file.buffer);
+
+      const sheet = workbook.getWorksheet("Ф1 Ф2");
+
+      if (!sheet) {
+        return res.status(400).json({
+          ok: false,
+          error: "Не знайдено вкладку Ф1 Ф2"
+        });
+      }
+
+      const headers = [
+        "ID договору",
+        "Ф1, грн",
+        "Ф2, грн"
+      ];
+
+      if (
+        sheet.getCell("A1").value !== headers[0] ||
+        sheet.getCell("G1").value !== headers[1] ||
+        sheet.getCell("H1").value !== headers[2]
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "Структура Excel не відповідає шаблону"
+        });
+      }
+
+      const rows = [];
+      const ids = new Set();
+
+      function readAmount(cell) {
+        const value = cell.value;
+
+        if (value === null || value === "") return null;
+
+        if (
+          typeof value !== "number" ||
+          !Number.isFinite(value) ||
+          value < 0 ||
+          Math.round(value * 100) !== value * 100
+        ) {
+          throw new Error(
+            `Некоректна сума в клітинці ${cell.address}`
+          );
+        }
+
+        return value;
+      }
+
+      sheet.eachRow((row, number) => {
+        if (number === 1) return;
+
+        const id = String(row.getCell(1).value || "").trim();
+
+        if (!id) return;
+
+        if (!/^CTR-\d{4}$/.test(id) || ids.has(id)) {
+          throw new Error(`Некоректний ID: ${id}`);
+        }
+
+        ids.add(id);
+
+        rows.push({
+          id,
+          f1: readAmount(row.getCell(7)),
+          f2: readAmount(row.getCell(8))
+        });
+      });
+
+      if (rows.length !== 170) {
+        return res.status(400).json({
+          ok: false,
+          error: `Очікується 170 договорів, отримано ${rows.length}`
+        });
+      }
+
+      const client = await pool.connect();
+
+      try {
+        await client.query("BEGIN");
+
+        let updated = 0;
+        let unchanged = 0;
+
+        for (const row of rows) {
+          const result = await client.query(
+            `
+              UPDATE rent_contracts
+              SET
+                rent_f1 = $2,
+                rent_f2 = $3,
+                updated_at = NOW()
+              WHERE id = $1
+                AND (
+                  rent_f1 IS DISTINCT FROM $2::numeric OR
+                  rent_f2 IS DISTINCT FROM $3::numeric
+                )
+              RETURNING id
+            `,
+            [row.id, row.f1, row.f2]
+          );
+
+          if (result.rowCount) updated++;
+          else unchanged++;
+        }
+
+        const check = await client.query(
+          `SELECT id FROM rent_contracts WHERE id = ANY($1::text[])`,
+          [rows.map(row => row.id)]
+        );
+
+        if (check.rowCount !== rows.length) {
+          throw new Error("Не всі ID знайдені в базі");
+        }
+
+        await client.query("COMMIT");
+
+        res.json({
+          ok: true,
+          received: rows.length,
+          updated,
+          unchanged
+        });
+
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 app.get("/api/contracts/:id/history", async (req, res, next) => {
   try {
     if (!pool) {
