@@ -198,21 +198,37 @@ h1 { margin: 0 0 7px; font-size: 24px; font-weight: 700; letter-spacing: -.45px;
   #registry .data-col { width: 230px; min-width: 230px; max-width: 230px; }
 }
 
-/* Головна адмінки та модульна навігація */
-[hidden] { display: none !important; }
-.module-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; max-width: 1260px; margin-top: 24px; }
-.module-card { display: flex; align-items: flex-start; gap: 16px; width: 100%; min-height: 190px; padding: 24px; border: 1px solid #dce5ef; border-radius: 16px; background: #fff; color: #233247; text-align: left; box-shadow: 0 4px 16px rgba(22,42,70,.045); }
-button.module-card { cursor: pointer; transition: border-color .18s, transform .18s, box-shadow .18s; }
-button.module-card:hover { border-color: #91aecf; transform: translateY(-2px); box-shadow: 0 7px 24px rgba(22,42,70,.09); }
-.module-card-icon { display: grid; place-items: center; flex: 0 0 42px; height: 42px; border-radius: 11px; background: #eaf0f7; color: #28466c; font-size: 25px; }
-.module-card-content { display: flex; flex: 1; flex-direction: column; gap: 11px; min-width: 0; }
-.module-card-content strong { font-size: 17px; }
-.module-card-content > span { color: #6d7989; font-size: 13px; line-height: 1.55; }
-.module-card-content small { margin-top: 12px; color: #315980; font-weight: 700; font-size: 12px; }
-.module-card-state { padding: 5px 8px; border-radius: 7px; font-size: 11px; font-weight: 700; white-space: nowrap; }
-.module-card-state.available { color: #167049; background: #e6f5ed; }
-.module-card.is-disabled { opacity: .58; cursor: default; }
-.back-to-modules { padding: 0; margin: 0 0 22px; border: 0; background: transparent; color: #335b84; font-weight: 700; font-size: 13px; }
-.back-to-modules:hover { text-decoration: underline; }
-@media (max-width: 1050px) { .module-grid { grid-template-columns: 1fr; max-width: 580px; } .module-card { min-height: 155px; } }
-@media (max-width: 550px) { .module-card { flex-wrap: wrap; padding: 18px; } .module-card-state { margin-left: 58px; } }
+/* Модальна картка договору */
+.contract-modal[hidden] { display: none !important; }
+.contract-modal { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; padding: 18px; }
+.contract-modal-backdrop { position: absolute; inset: 0; background: rgba(24, 39, 62, .54); }
+.contract-dialog { position: relative; display: flex; flex-direction: column; width: min(850px, 100%); max-height: min(90vh, 980px); overflow: hidden; border-radius: 18px; background: white; box-shadow: 0 24px 85px rgba(12, 29, 55, .25); outline: none; }
+.contract-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 23px 28px 12px; }
+.contract-dialog-header h2 { display: inline-block; margin: 0 12px 0 0; font-size: 25px; color: #1b2e49; }
+.contract-modal-status { display: inline-block; padding: 5px 10px; border-radius: 30px; background: #e6f4ed; color: #246b49; font-size: 12px; font-weight: 650; }
+.contract-close { border: 0; background: transparent; color: #61718a; font-size: 28px; line-height: 1; padding: 2px 7px; }
+.contract-tabs { display: flex; gap: 24px; padding: 0 28px; border-bottom: 1px solid #e1e7f0; overflow-x: auto; }
+.contract-tabs button { border: 0; border-bottom: 3px solid transparent; background: transparent; color: #66778d; padding: 12px 0; white-space: nowrap; font-size: 13px; }
+.contract-tabs button.is-active { border-bottom-color: #2969c8; color: #205bb6; font-weight: 700; }
+.contract-dialog-content { overflow: auto; padding: 18px 28px 24px; }
+.contract-info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.contract-info-card { border: 1px solid #e1e8f1; border-radius: 12px; padding: 17px; margin-bottom: 12px; min-width: 0; background: #fff; }
+.contract-info-grid .contract-info-card { margin-bottom: 0; }
+.contract-info-card h3 { margin: 0 0 14px; color: #213e67; font-size: 15px; }
+.contract-info-card dl { display: grid; grid-template-columns: minmax(105px, 40%) minmax(0, 1fr); gap: 8px 12px; margin: 0; font-size: 12.5px; line-height: 1.5; }
+.contract-info-card dt { color: #718096; overflow-wrap: anywhere; }
+.contract-info-card dd { margin: 0; color: #24354d; overflow-wrap: anywhere; white-space: pre-wrap; }
+.contract-folder-link { display: inline-block; margin: 3px 0 10px; font-weight: 600; color: #2468c0; }
+.contract-dialog-footer { display: flex; align-items: center; gap: 15px; padding: 13px 28px; border-top: 1px solid #e7ecf3; }
+.contract-secondary-btn { padding: 10px 20px; border: 1px solid #d6dfeb; border-radius: 9px; color: #233f63; background: #f8fafd; font-weight: 600; }
+.contract-readonly-note { color: #7b8796; font-size: 12px; }
+.contract-clickable-row { cursor: pointer; }
+.contract-clickable-row:focus-visible { outline: 2px solid #3475cf; outline-offset: -2px; }
+.contract-modal-open { overflow: hidden; }
+@media (max-width: 650px) {
+  .contract-modal { padding: 7px; }
+  .contract-dialog { max-height: 97vh; }
+  .contract-dialog-header, .contract-dialog-content, .contract-dialog-footer { padding-left: 16px; padding-right: 16px; }
+  .contract-tabs { padding-left: 16px; padding-right: 16px; }
+  .contract-info-grid { grid-template-columns: 1fr; }
+}
