@@ -489,17 +489,29 @@ button.module-card:hover {
 
 .location-filter {
   position: relative;
-  min-width: 175px;
+  width: 170px;
+  min-width: 170px;
   font-size: 13px;
 }
 
 .location-filter summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 40px;
+  width: 100%;
+  padding: 0 12px;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #233247;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  line-height: normal;
   list-style: none;
   cursor: pointer;
-  padding: 10px 13px;
-  background: #fff;
-  border: 1px solid #d8dde3;
-  border-radius: 8px;
   white-space: nowrap;
   user-select: none;
 }
@@ -509,12 +521,22 @@ button.module-card:hover {
 }
 
 .location-filter summary::after {
-  content: "⌄";
-  margin-left: 12px;
+  content: "";
+  display: block;
+  flex: 0 0 7px;
+  width: 7px;
+  height: 7px;
+  margin-right: 3px;
+  border-right: 1.5px solid #233247;
+  border-bottom: 1.5px solid #233247;
+  transform: rotate(45deg) translateY(-2px);
 }
 
-.location-filter[open] summary {
-  border-color: #777;
+.location-filter[open] summary,
+.location-filter summary:focus-visible {
+  border-color: #789bc9;
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(78, 122, 185, .13);
 }
 
 .location-filter-options {
