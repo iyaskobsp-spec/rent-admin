@@ -834,7 +834,7 @@ app.patch("/api/contracts/:id", async (req, res, next) => {
     "area_sqm", "property_rights", "folder_url",
     "verification_status", "contacts",
     "payment_terms", "critical_terms", "notes",
-    "rent_f1", "rent_f2"
+    "rent_f1", "rent_f2", "region"
   ];
 
   const jsonFields = new Set([
@@ -914,6 +914,200 @@ app.use((error, req, res, next) => {
   });
 });
 
+async function autofillContractRegions() {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const csvPath = path.join(__dirname, "settlements.csv");
+
+  if (!fs.existsSync(csvPath)) {
+    console.warn("REGIONS: settlements.csv не знайдено, автозаповнення пропущено");
+    return;
+  }
+
+  const normalize = value => String(value ?? "")
+    .toLocaleLowerCase("uk")
+    .replace(/[ʼ’`]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const cleanCity = value => normalize(value)
+    .replace(/^(?:(?:місто|село|селище|смт)\s+|(?:м|с|смт)\.\s*)/u, "");
+
+  const rows = fs.readFileSync(csvPath, "utf8")
+    .replace(/^\uFEFF/, "")
+    .split(/\r?\n/)
+    .filter(Boolean);
+
+  const headers = rows.shift().split(";");
+  const column = name => headers.indexOf(name);
+
+  const settlements = new Map();
+  const allRegions = new Set();
+
+  for (const line of rows) {
+    const cells = line.split(";");
+    const name = cells[column("name")]?.trim();
+    const type = normalize(cells[column("type")]);
+    let region = cells[column("oblast")]?.trim() || "";
+    const raion = cells[column("raion")]?.trim() || "";
+    const hromada = cells[column("hromada")]?.trim() || "";
+
+    if (!name) continue;
+
+    if (!region && name === "Київ" && type === "місто") {
+      region = "м. Київ";
+    }
+    if (!region && name === "Севастополь" && type === "місто") {
+      region = "м. Севастополь";
+    }
+
+    if (!region) continue;
+
+    allRegions.add(region);
+
+    const key = normalize(name);
+    if (!settlements.has(key)) settlements.set(key, []);
+
+    settlements.get(key).push({ name, type, region, raion, hromada });
+  }
+
+  function findRegion(objectName, address) {
+    const original = normalize(objectName);
+    const city = cleanCity(objectName);
+    const addressText = normalize(address);
+
+    if (!city) return null;
+
+    let matches = [...(settlements.get(city) || [])];
+
+    if (!matches.length) return null;
+
+    // Якщо область прямо зазначена в адресі, вона має пріоритет.
+    const explicitRegion = [...allRegions].find(region => {
+      const lower = normalize(region);
+
+      if (lower.startsWith("м. ")) {
+        return false;
+      }
+
+      if (lower === "автономна республіка крим") {
+        return addressText.includes(lower);
+      }
+
+      const stem = lower.slice(0, 5);
+      const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+      return new RegExp(
+        `(?:^|[^а-яіїєґ])${escaped}[а-яіїєґ'-]*\\s+обл(?:асть|асті|\\.)?`,
+        "iu"
+      ).test(addressText);
+    });
+
+    if (explicitRegion) {
+      const filtered = matches.filter(item => item.region === explicitRegion);
+      if (filtered.length) matches = filtered;
+      else return null;
+    }
+
+    // Район і громада уточнюють однойменні населені пункти.
+    if (matches.length > 1) {
+      const byRaion = matches.filter(item =>
+        item.raion &&
+        addressText.includes(normalize(item.raion))
+      );
+      if (byRaion.length) matches = byRaion;
+    }
+
+    if (matches.length > 1) {
+      const byHromada = matches.filter(item =>
+        item.hromada &&
+        addressText.includes(normalize(item.hromada))
+      );
+      if (byHromada.length) matches = byHromada;
+    }
+
+    // Тип враховуємо, якщо він дійсно зазначений.
+    if (matches.length > 1) {
+      let requiredType = "";
+
+      if (/^(?:м\.|місто\s)/u.test(original)) requiredType = "місто";
+      if (/^(?:с\.|село\s)/u.test(original)) requiredType = "село";
+
+      if (requiredType) {
+        const byType = matches.filter(item => item.type === requiredType);
+        if (byType.length) matches = byType;
+      }
+    }
+
+    const regions = [...new Set(matches.map(item => item.region))];
+
+    return regions.length === 1 ? regions[0] : null;
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS rent_system_migrations (
+        migration_key TEXT PRIMARY KEY,
+        completed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+
+    const marker = "initial_region_autofill_v1";
+
+    const alreadyDone = await client.query(
+      "SELECT 1 FROM rent_system_migrations WHERE migration_key = $1",
+      [marker]
+    );
+
+    if (alreadyDone.rowCount) {
+      await client.query("COMMIT");
+      return;
+    }
+
+    const contracts = await client.query(`
+      SELECT id, object_name, address
+      FROM rent_contracts
+      WHERE region IS NULL OR BTRIM(region) = ''
+    `);
+
+    let updated = 0;
+
+    for (const contract of contracts.rows) {
+      const region = findRegion(contract.object_name, contract.address);
+      if (!region) continue;
+
+      const result = await client.query(
+        `UPDATE rent_contracts
+         SET region = $2, updated_at = NOW()
+         WHERE id = $1 AND (region IS NULL OR BTRIM(region) = '')`,
+        [contract.id, region]
+      );
+
+      updated += result.rowCount;
+    }
+
+    await client.query(
+      "INSERT INTO rent_system_migrations (migration_key) VALUES ($1)",
+      [marker]
+    );
+
+    await client.query("COMMIT");
+
+    console.log(
+      `REGIONS: автозаповнено ${updated} із ${contracts.rowCount} договорів`
+    );
+  } catch (error) {
+    await client.query("ROLLBACK");
+    console.error("REGIONS AUTOFILL ERROR:", error.message);
+  } finally {
+    client.release();
+  }
+}
+
 async function initializeDatabase() {
   if (!pool) {
     console.error("DATABASE_URL відсутня");
@@ -958,7 +1152,8 @@ async function initializeDatabase() {
     await pool.query(`
       ALTER TABLE rent_contracts
         ADD COLUMN IF NOT EXISTS rent_f1 NUMERIC(14,2),
-        ADD COLUMN IF NOT EXISTS rent_f2 NUMERIC(14,2);
+        ADD COLUMN IF NOT EXISTS rent_f2 NUMERIC(14,2),
+        ADD COLUMN IF NOT EXISTS region TEXT;
     `);
 
     console.log("DATABASE RENT FIELDS: ready");
@@ -1031,7 +1226,9 @@ async function initializeDatabase() {
       $$;
     `);
 
-    console.log("DATABASE HISTORY: ready");    
+    console.log("DATABASE HISTORY: ready");
+
+    await autofillContractRegions();    
 
     console.log("DATABASE TABLES: rent_contracts ready");
   } catch (error) {
