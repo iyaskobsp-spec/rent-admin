@@ -62,6 +62,17 @@
         <option value="review">Потребують звірки</option>
         <option value="expired">Строк минув</option>
       </select>
+      <details class="location-filter" id="regionDropdown">
+        <summary id="regionFilterLabel">Області: усі</summary>
+        <div class="location-filter-options" id="regionOptions"></div>
+      </details>
+
+      <details class="location-filter" id="cityDropdown">
+        <summary id="cityFilterLabel">Міста: усі</summary>
+        <div class="location-filter-options" id="cityOptions"></div>
+      </details>
+
+      <button id="clearLocationFilters" type="button">Скинути область / місто</button>
       <span class="count" id="count"></span>
     </div>
 
@@ -197,6 +208,170 @@
     const count = document.querySelector("#count");
     const empty = document.querySelector("#empty");
 
+    const selectedRegions = new Set();
+    const selectedCities = new Set();
+
+    const regionNames = [
+      "Вінницька", "Волинська", "Дніпропетровська",
+      "Донецька", "Житомирська", "Закарпатська",
+      "Запорізька", "Івано-Франківська", "Київська",
+      "Кіровоградська", "Луганська", "Львівська",
+      "Миколаївська", "Одеська", "Полтавська",
+      "Рівненська", "Сумська", "Тернопільська",
+      "Харківська", "Херсонська", "Хмельницька",
+      "Черкаська", "Чернівецька", "Чернігівська"
+    ];
+
+    function parseLocation(address) {
+      const text = String(address || "").trim();
+      const unknown = "Не визначено";
+
+      if (!text || text === "—") {
+        return { region: unknown, city: unknown };
+      }
+
+      let region = unknown;
+
+      for (const name of regionNames) {
+        const root = name.toLocaleLowerCase("uk").slice(0, 5);
+        if (
+          text.toLocaleLowerCase("uk").includes(root) &&
+          /обл(?:асть|\.)?/iu.test(text)
+        ) {
+          region = name;
+          break;
+        }
+      }
+
+      if (/автономна республіка крим|арк\b/iu.test(text)) {
+        region = "АР Крим";
+      }
+
+      const cityMatch = text.match(
+        /(?:^|[,;]\s*|\s)(?:м\.|місто\s+|с\.|село\s+|смт\.?\s*|селище\s+)([А-ЯІЇЄҐа-яіїєґ][А-ЯІЇЄҐа-яіїєґʼ’'\-\s]*?)(?=,|;|\s+(?:вул\.|вулиця|просп\.|проспект|пров\.|провулок|бульвар|б-р|пл\.)|$)/iu
+      );
+
+      let city = cityMatch
+        ? cityMatch[1].trim()
+        : unknown;
+
+      if (city === unknown) {
+        const firstPart = text.split(",")[0].trim();
+        const firstCity = firstPart.match(
+          /^(?:м\.?\s*)?([А-ЯІЇЄҐ][А-ЯІЇЄҐа-яіїєґʼ’'\-\s]+)$/u
+        );
+
+        if (
+          firstCity &&
+          !/обл|район|вулиц|вул\.|просп|селищ|область/iu.test(firstPart)
+        ) {
+          city = firstCity[1].trim();
+        }
+      }
+
+      city = city.replace(/\s+/g, " ").trim() || unknown;
+
+      if (/^київ$/iu.test(city) && region === unknown) {
+        region = "м. Київ";
+      }
+
+      return { region, city };
+    }
+
+    function locationRows() {
+      return registryRows.map(row => ({
+        ...row,
+        location: parseLocation(row.address)
+      }));
+    }
+
+    function makeLocationOptions(containerId, values, selectedSet, labelId, title) {
+      const container = document.querySelector(`#${containerId}`);
+      container.replaceChildren();
+
+      const sortedValues = [...new Set(values)].sort(
+        (a, b) => a.localeCompare(b, "uk")
+      );
+
+      for (const value of sortedValues) {
+        const label = document.createElement("label");
+        label.className = "location-filter-option";
+
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = value;
+        checkbox.checked = selectedSet.has(value);
+
+        checkbox.addEventListener("change", () => {
+          if (checkbox.checked) selectedSet.add(value);
+          else selectedSet.delete(value);
+
+          updateLocationFilters();
+          render();
+        });
+
+        const text = document.createElement("span");
+        text.textContent = value;
+
+        label.append(checkbox, text);
+        container.append(label);
+      }
+
+      if (!sortedValues.length) {
+        const message = document.createElement("span");
+        message.textContent = "Немає варіантів";
+        container.append(message);
+      }
+
+      document.querySelector(`#${labelId}`).textContent =
+        selectedSet.size
+          ? `${title}: ${selectedSet.size} вибрано`
+          : `${title}: усі`;
+    }
+
+    function updateLocationFilters() {
+      const rows = locationRows();
+
+      makeLocationOptions(
+        "regionOptions",
+        rows.map(row => row.location.region),
+        selectedRegions,
+        "regionFilterLabel",
+        "Області"
+      );
+
+      const possibleCities = rows
+        .filter(row =>
+          !selectedRegions.size ||
+          selectedRegions.has(row.location.region)
+        )
+        .map(row => row.location.city);
+
+      makeLocationOptions(
+        "cityOptions",
+        [...possibleCities, ...selectedCities],
+        selectedCities,
+        "cityFilterLabel",
+        "Міста"
+      );
+    }
+
+    document.querySelector("#clearLocationFilters").addEventListener("click", () => {
+      selectedRegions.clear();
+      selectedCities.clear();
+      updateLocationFilters();
+      render();
+    });
+
+    document.addEventListener("click", event => {
+      for (const id of ["regionDropdown", "cityDropdown"]) {
+        const dropdown = document.querySelector(`#${id}`);
+        if (!dropdown.contains(event.target)) {
+          dropdown.open = false;
+        }
+      }
+    });    
+
     function cell(tag, value, className = "") {
       const element = document.createElement(tag);
       element.textContent = value ?? "—";
@@ -256,7 +431,17 @@
         const matchesStatus = !selectedStatus || row.status === selectedStatus;
         const matchesSearch = !query || Object.values(row)
           .some(value => String(value).toLocaleLowerCase("uk").includes(query));
-        return matchesStatus && matchesSearch;
+
+        const location = parseLocation(row.address);
+
+        const matchesRegion =
+          !selectedRegions.size || selectedRegions.has(location.region);
+
+        const matchesCity =
+          !selectedCities.size || selectedCities.has(location.city);
+
+        return matchesStatus && matchesSearch &&
+          matchesRegion && matchesCity;
       });
 
       const fragment = document.createDocumentFragment();
@@ -956,6 +1141,7 @@
         registryRows = data.contracts.map(mapContract);
         contractsRaw = new Map(data.contracts.map(contract => [contract.id, contract]));
         contractsLoaded = true;
+        updateLocationFilters();
         render();
         result.textContent = `У реєстрі ${registryRows.length} договорів.`;
       } catch (error) {
