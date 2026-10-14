@@ -600,3 +600,48 @@ button.module-card:hover {
     box-sizing: border-box;
   }
 }
+
+/* Сортування колонок реєстру */
+
+#registry th .sort-header-button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  min-height: 27px;
+  padding: 2px 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+#registry th .sort-header-button:hover {
+  color: #2468c0;
+}
+
+#registry th .sort-header-button.is-sorted {
+  color: #1e5cad;
+  font-weight: 750;
+}
+
+#registry th .sort-arrow {
+  flex-shrink: 0;
+  color: #8795a8;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+#registry th .is-sorted .sort-arrow {
+  color: #1e5cad;
+}
+
+#registry th .sort-header-button:focus-visible {
+  outline: 2px solid #5889ca;
+  outline-offset: 3px;
+}
