@@ -393,7 +393,14 @@
       const formatMoney = amount =>
         amount === null || !Number.isFinite(amount)
           ? "—"
-          : moneyFormat.format(amount);      
+          : moneyFormat.format(amount);
+      const areaAmount = c.area_sqm === null || c.area_sqm === undefined
+        ? null
+        : Number(c.area_sqm);
+
+      const pricePerSqm = areaAmount > 0 && rentTotal !== null
+        ? rentTotal / areaAmount
+        : null;      
       const contacts = c.contacts || {};
       const critical = c.critical_terms || {};
 
@@ -427,6 +434,9 @@
         id: c.id,
         tt: c.tt_code || "—",
         address: c.address || "—",
+        area: areaAmount === null || !Number.isFinite(areaAmount)
+          ? "—" : moneyFormat.format(areaAmount),
+        pricePerSqm: formatMoney(pricePerSqm),
 
         status,
         statusText,
