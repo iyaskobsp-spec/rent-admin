@@ -281,70 +281,158 @@
 
     function parseLocation(address, objectName) {
       const unknown = "Не визначено";
+
+      function norm(value) {
+        return String(value || "")
+          .toLocaleLowerCase("uk")
+          .replace(/[ʼ’`]/g, "'")
+          .replace(/\s+/g, " ")
+          .trim();
+      }
+
       const original = String(objectName || "").trim();
-      const addressText = String(address || "");
+      const addressText = norm(address);
 
       const typeMatch = original.match(
-        /^(місто|село|селище|смт|м\.|с\.)\s*/iu
+        /^(?:(місто|село|селище|смт)\s+|([мс]|смт)\.\s*)/iu
       );
 
       const typeHint = typeMatch
-        ? normalizeLocation(typeMatch[1])
+        ? norm(typeMatch[1] || typeMatch[2])
         : "";
 
-      const cityName = original
-        .replace(/^(?:місто|село|селище|смт\.?|м\.|с\.)\s*/iu, "")
+      const name = original
+        .replace(
+          /^(?:(?:місто|село|селище|смт)\s+|(?:м|с|смт)\.\s*)/iu,
+          ""
+        )
         .trim();
 
-      const candidates = settlementsByName.get(
-        normalizeLocation(cityName)
-      ) || [];
+      const candidates = settlementsByName.get(norm(name)) || [];
 
-      const addressSegments = addressText.split(/[,;()]/);
-      let explicitRegion = "";
+      if (!candidates.length) {
+        return { region: unknown, city: name || unknown };
+      }
 
-      for (const segment of addressSegments) {
-        const match = normalizeLocation(segment).match(
-          /^(.*?)\s+обл(?:асть|асті|\.)?\.?$/
+      let matches = [...candidates];
+
+      function hasAdministrativeName(value, suffixPattern) {
+        const normalized = norm(value);
+        if (!normalized) return false;
+
+        const stem = normalized.slice(0, 5);
+        const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+        return new RegExp(
+          `${escaped}[а-яіїєґ'\\-]*\\s*${suffixPattern}`,
+          "iu"
+        ).test(addressText);
+      }
+
+      // 1. Пріоритет: область, прямо зазначена в адресі.
+      const byOblast = matches.filter(item =>
+        hasAdministrativeName(
+          item.oblast,
+          "обл(?:асть|асті|\\.)?"
+        )
+      );
+
+      if (byOblast.length) {
+        matches = byOblast;
+      }
+
+      // 2. Уточнення за районом.
+      if (matches.length > 1) {
+        const byRaion = matches.filter(item =>
+          hasAdministrativeName(
+            item.raion,
+            "(?:район[а-яіїєґ]*|р-н)"
+          )
         );
 
-        if (match) {
-          explicitRegion = match[1]
-            .replace(/\s+/g, " ")
-            .trim();
-          break;
+        if (byRaion.length) {
+          matches = byRaion;
         }
       }
 
-      let matches = candidates;
+      // 3. Уточнення за громадою.
+      if (matches.length > 1) {
+        const byHromada = matches.filter(item =>
+          hasAdministrativeName(
+            item.hromada,
+            "(?:громад[а-яіїєґ]*|тг)"
+          )
+        );
 
-      if (typeHint === "м." || typeHint === "місто") {
-        matches = matches.filter(item => item.type === "місто");
-      } else if (typeHint === "с." || typeHint === "село") {
-        matches = matches.filter(item => item.type === "село");
-      } else if (typeHint === "смт" || typeHint === "селище") {
-        matches = matches.filter(item => item.type.includes("селище"));
+        if (byHromada.length) {
+          matches = byHromada;
+        }
       }
 
-      if (explicitRegion) {
-        matches = matches.filter(item =>
-          normalizeLocation(item.oblast).startsWith(explicitRegion)
+      // 4. Тип населеного пункту, якщо він зазначений.
+      if (matches.length > 1 && typeHint) {
+        const byType = matches.filter(item => {
+          if (typeHint === "м" || typeHint === "місто") {
+            return item.type === "місто";
+          }
+
+          if (typeHint === "с" || typeHint === "село") {
+            return item.type === "село";
+          }
+
+          if (typeHint === "смт") {
+            return item.type === "селище міського типу";
+          }
+
+          if (typeHint === "селище") {
+            return item.type.includes("селище");
+          }
+
+          return false;
+        });
+
+        if (byType.length) {
+          matches = byType;
+        }
+      }
+
+      // Без позначення типу: визначаємо, чи є
+      // одне місто серед однойменних населених пунктів.
+      if (matches.length > 1 && !typeHint) {
+        const cities = matches.filter(item =>
+          item.type === "місто"
         );
+
+        if (cities.length === 1) {
+          matches = cities;
+        }
       }
 
       const regions = [...new Set(
-        matches.map(item => item.oblast).filter(Boolean)
+        matches
+          .map(item => item.oblast)
+          .filter(Boolean)
       )];
 
-      const region = regions.length === 1
+      let region = regions.length === 1
         ? regions[0]
         : unknown;
 
-      const city = matches.length && (region !== unknown)
-        ? matches[0].name
-        : unknown;
+      // Київ у КАТОТТГ має порожнє поле області.
+      if (
+        matches.some(item =>
+          norm(item.name) === "київ" &&
+          item.type === "місто"
+        ) &&
+        matches.every(item => item.type === "місто")
+      ) {
+        region = "м. Київ";
+      }
 
-      return { region, city };
+      return {
+        region,
+        city: matches[0]?.name || name || unknown
+      };
     }
 
     function locationRows() {
