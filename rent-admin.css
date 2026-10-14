@@ -603,45 +603,58 @@ button.module-card:hover {
 
 /* Сортування колонок реєстру */
 
-#registry th .sort-header-button {
-  display: flex;
+#registry thead th button.sort-header-button {
+  display: inline-flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  width: 100%;
-  min-height: 27px;
-  padding: 2px 0;
-  border: 0;
-  border-radius: 4px;
+  justify-content: flex-start;
+  gap: 4px;
+  width: auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  outline: none;
   background: transparent;
+  appearance: none;
+  -webkit-appearance: none;
   color: inherit;
-  font: inherit;
+  font-family: inherit;
+  font-size: inherit;
   font-weight: inherit;
+  line-height: inherit;
   text-align: left;
   cursor: pointer;
 }
 
-#registry th .sort-header-button:hover {
+#registry thead th button.sort-header-button:hover {
+  background: transparent;
   color: #2468c0;
 }
 
-#registry th .sort-header-button.is-sorted {
+#registry thead th button.sort-header-button.is-sorted {
   color: #1e5cad;
-  font-weight: 750;
+  font-weight: 700;
 }
 
-#registry th .sort-arrow {
+#registry thead th button.sort-header-button .sort-arrow {
+  display: inline-block;
   flex-shrink: 0;
-  color: #8795a8;
-  font-size: 14px;
-  font-weight: 600;
+  color: #aab5c3;
+  font-size: 10px;
+  font-weight: 400;
+  opacity: 0.5;
 }
 
-#registry th .is-sorted .sort-arrow {
-  color: #1e5cad;
+#registry thead th button.sort-header-button:hover .sort-arrow,
+#registry thead th button.sort-header-button.is-sorted .sort-arrow {
+  color: #2468c0;
+  opacity: 1;
 }
 
-#registry th .sort-header-button:focus-visible {
-  outline: 2px solid #5889ca;
+#registry thead th button.sort-header-button:focus-visible {
+  outline: 2px solid #789bc9;
   outline-offset: 3px;
+  border-radius: 2px;
 }
