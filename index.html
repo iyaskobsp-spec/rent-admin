@@ -238,22 +238,23 @@
       "Черкаська", "Чернівецька", "Чернігівська"
     ];
 
-    function parseLocation(address) {
-      const text = String(address || "").trim();
+    function parseLocation(address, objectName) {
       const unknown = "Не визначено";
 
-      if (!text || text === "—") {
-        return { region: unknown, city: unknown };
-      }
+      const city = String(objectName || "")
+        .trim()
+        .replace(/^(?:м\.?\s*|місто\s+|с\.?\s*|село\s+|смт\.?\s*|селище\s+)/iu, "")
+        .replace(/\s+/g, " ")
+        .trim() || unknown;
 
-      const lower = text.toLocaleLowerCase("uk");
+      const text = String(address || "").toLocaleLowerCase("uk");
       let region = unknown;
 
       for (const name of regionNames) {
         const root = name.toLocaleLowerCase("uk").slice(0, 5);
 
         if (
-          lower.includes(root) &&
+          text.includes(root) &&
           /обл(?:асть|\.|асті)?/iu.test(text)
         ) {
           region = name;
@@ -261,69 +262,7 @@
         }
       }
 
-      if (/автономна республіка крим|арк\b/iu.test(text)) {
-        region = "АР Крим";
-      }
-
-      const streetWords =
-        /\b(?:вул\.?|вулиця|просп\.?|проспект|пр-т|пров\.?|провулок|бульвар|б-р|пл\.?|площа|шосе|набережна|дорога|квартал|мікрорайон|мкр\.?)\b/iu;
-
-      const administrativeWords =
-        /\b(?:область|області|обл\.?|район|р-н|громада|територіальна громада)\b/iu;
-
-      const parts = text
-        .split(/[,;]/)
-        .map(part => part.trim())
-        .filter(Boolean);
-
-      let city = unknown;
-
-      const cityInBrackets = text.match(
-        /\(\s*(?:(?:місто|село|селище)\s+|(?:м|с|смт)\.\s*)([^()]+?)\s*\)/iu
-      );
-
-      if (cityInBrackets) {
-        city = cityInBrackets[1].trim();
-      }
-      
-      for (const part of city === unknown ? parts : []) {
-        if (streetWords.test(part) || administrativeWords.test(part)) {
-          continue;
-        }
-
-        const match = part.match(
-          /^(?:(?:місто|село|селище)\s+|(?:м|с|смт)\.\s*)([А-ЯІЇЄҐа-яіїєґ][А-ЯІЇЄҐа-яіїєґʼ’'\-\s]*)$/iu
-        );
-
-        if (!match) continue;
-
-        const candidate = match[1].trim().replace(/\s+/g, " ");
-
-        if (
-          candidate &&
-          !streetWords.test(candidate) &&
-          !administrativeWords.test(candidate) &&
-          !/\d/.test(candidate)
-        ) {
-          city = candidate;
-          break;
-        }
-      }
-
-      if (city !== unknown) {
-        city = city
-          .replace(/^(?:місто|істо|м\.|село|селище|смт\.?|с\.)\s+/iu, "")
-          .replace(/\s+/g, " ")
-          .trim();
-
-        if (
-          /(?:\bвул\.?|\bпр-т|\bпроспект|\bпровулок|\bбульвар|\bшосе)$/iu.test(city)
-        ) {
-          city = unknown;
-        }
-      }
-      
-      if (/^київ$/iu.test(city) && region === unknown) {
+      if (city.toLocaleLowerCase("uk") === "київ") {
         region = "м. Київ";
       }
 
@@ -333,7 +272,7 @@
     function locationRows() {
       return registryRows.map(row => ({
         ...row,
-        location: parseLocation(row.address)
+        location: parseLocation(row.address, row.objectName)
       }));
     }
 
@@ -484,7 +423,7 @@
         const matchesSearch = !query || Object.values(row)
           .some(value => String(value).toLocaleLowerCase("uk").includes(query));
 
-        const location = parseLocation(row.address);
+        const location = parseLocation(row.address, row.objectName);
 
         const matchesRegion =
           !selectedRegions.size || selectedRegions.has(location.region);
@@ -675,6 +614,7 @@
         id: c.id,
         tt: c.tt_code || "—",
         address: c.address || "—",
+        objectName: c.object_name || "",
         area: areaAmount === null || !Number.isFinite(areaAmount)
           ? "—" : moneyFormat.format(areaAmount),
         pricePerSqm: formatMoney(pricePerSqm),
