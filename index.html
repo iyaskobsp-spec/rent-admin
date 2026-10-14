@@ -211,7 +211,9 @@
       [
         ["ID договору", "fixed-id"],
         ["Код ТТ", "fixed-tt"],
-        ["Адреса", "fixed-address"]
+        ["Адреса", "fixed-address"],
+        ["Площа, м²", "data-col"],
+        ["Оренда, грн/м²", "data-col"]
       ].forEach(([label, className]) => {
         const th = cell("th", label, className);
         th.rowSpan = 2;
@@ -274,7 +276,9 @@
         tr.append(
           cell("td", row.id, "fixed-id"),
           cell("td", row.tt, "fixed-tt"),
-          cell("td", row.address, "fixed-address")
+          cell("td", row.address, "fixed-address"),
+          cell("td", row.area, "data-col"),
+          cell("td", row.pricePerSqm, "data-col")
         );
 
         groups.forEach(group => {
