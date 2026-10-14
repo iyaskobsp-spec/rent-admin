@@ -833,7 +833,8 @@ app.patch("/api/contracts/:id", async (req, res, next) => {
     "end_date", "contract_status", "renewal_terms",
     "area_sqm", "property_rights", "folder_url",
     "verification_status", "contacts",
-    "payment_terms", "critical_terms", "notes"
+    "payment_terms", "critical_terms", "notes",
+    "rent_f1", "rent_f2"
   ];
 
   const jsonFields = new Set([
