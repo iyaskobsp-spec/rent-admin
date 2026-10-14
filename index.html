@@ -227,218 +227,41 @@
 
     syncLocationFilterFonts();    
 
-    let settlementsByName = new Map();
+    const availableRegions = [
+      "Автономна Республіка Крим",
+      "Вінницька", "Волинська", "Дніпропетровська",
+      "Донецька", "Житомирська", "Закарпатська",
+      "Запорізька", "Івано-Франківська", "Київська",
+      "Кіровоградська", "Луганська", "Львівська",
+      "Миколаївська", "Одеська", "Полтавська",
+      "Рівненська", "Сумська", "Тернопільська",
+      "Харківська", "Херсонська", "Хмельницька",
+      "Черкаська", "Чернівецька", "Чернігівська",
+      "м. Київ", "м. Севастополь"
+    ];
 
-    function normalizeLocation(value) {
+    function cleanSettlementName(value) {
       return String(value || "")
-        .toLocaleLowerCase("uk")
-        .replace(/[ʼ’`]/g, "'")
-        .replace(/\s+/g, " ")
-        .trim();
-    }
-
-    async function loadSettlements() {
-      const response = await fetch("./settlements.csv");
-
-      if (!response.ok) {
-        throw new Error("Не вдалося завантажити довідник населених пунктів");
-      }
-
-      const csv = await response.text();
-      const lines = csv.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
-      const headers = lines.shift().split(";").map(x => x.trim());
-      const index = name => headers.indexOf(name);
-
-      const nextMap = new Map();
-
-      for (const line of lines) {
-        if (!line.trim()) continue;
-
-        const columns = line.split(";");
-        const name = columns[index("name")]?.trim();
-        const type = columns[index("type")]?.trim();
-        const oblast = columns[index("oblast")]?.trim();
-        const raion = columns[index("raion")]?.trim();
-        const hromada = columns[index("hromada")]?.trim();
-
-        if (!name) continue;
-
-        const key = normalizeLocation(name);
-
-        if (!nextMap.has(key)) nextMap.set(key, []);
-
-        nextMap.get(key).push({
-          name,
-          type: normalizeLocation(type),
-          oblast: oblast || (name === "Київ" && type === "місто" ? "м. Київ" : ""),
-          raion,
-          hromada
-        });
-      }
-
-      settlementsByName = nextMap;
-    }
-
-    function parseLocation(address, objectName) {
-      const unknown = "Не визначено";
-
-      function norm(value) {
-        return String(value || "")
-          .toLocaleLowerCase("uk")
-          .replace(/[ʼ’`]/g, "'")
-          .replace(/\s+/g, " ")
-          .trim();
-      }
-
-      const original = String(objectName || "").trim();
-      const addressText = norm(address);
-
-      const typeMatch = original.match(
-        /^(?:(місто|село|селище|смт)\s+|([мс]|смт)\.\s*)/iu
-      );
-
-      const typeHint = typeMatch
-        ? norm(typeMatch[1] || typeMatch[2])
-        : "";
-
-      const name = original
+        .trim()
         .replace(
           /^(?:(?:місто|село|селище|смт)\s+|(?:м|с|смт)\.\s*)/iu,
           ""
         )
-        .trim();
+        .replace(/\s+/g, " ")
+        .trim() || "Не визначено";
+    }
 
-      const candidates = settlementsByName.get(norm(name)) || [];
-
-      if (!candidates.length) {
-        return { region: unknown, city: name || unknown };
-      }
-
-      let matches = [...candidates];
-
-      function hasAdministrativeName(value, suffixPattern) {
-        const normalized = norm(value);
-        if (!normalized) return false;
-
-        const stem = normalized.slice(0, 5);
-        const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-        return new RegExp(
-          `${escaped}[а-яіїєґ'\\-]*\\s*${suffixPattern}`,
-          "iu"
-        ).test(addressText);
-      }
-
-      // 1. Пріоритет: область, прямо зазначена в адресі.
-      const byOblast = matches.filter(item =>
-        hasAdministrativeName(
-          item.oblast,
-          "обл(?:асть|асті|\\.)?"
-        )
-      );
-
-      if (byOblast.length) {
-        matches = byOblast;
-      }
-
-      // 2. Уточнення за районом.
-      if (matches.length > 1) {
-        const byRaion = matches.filter(item =>
-          hasAdministrativeName(
-            item.raion,
-            "(?:район[а-яіїєґ]*|р-н)"
-          )
-        );
-
-        if (byRaion.length) {
-          matches = byRaion;
-        }
-      }
-
-      // 3. Уточнення за громадою.
-      if (matches.length > 1) {
-        const byHromada = matches.filter(item =>
-          hasAdministrativeName(
-            item.hromada,
-            "(?:громад[а-яіїєґ]*|тг)"
-          )
-        );
-
-        if (byHromada.length) {
-          matches = byHromada;
-        }
-      }
-
-      // 4. Тип населеного пункту, якщо він зазначений.
-      if (matches.length > 1 && typeHint) {
-        const byType = matches.filter(item => {
-          if (typeHint === "м" || typeHint === "місто") {
-            return item.type === "місто";
-          }
-
-          if (typeHint === "с" || typeHint === "село") {
-            return item.type === "село";
-          }
-
-          if (typeHint === "смт") {
-            return item.type === "селище міського типу";
-          }
-
-          if (typeHint === "селище") {
-            return item.type.includes("селище");
-          }
-
-          return false;
-        });
-
-        if (byType.length) {
-          matches = byType;
-        }
-      }
-
-      // Без позначення типу: визначаємо, чи є
-      // одне місто серед однойменних населених пунктів.
-      if (matches.length > 1 && !typeHint) {
-        const cities = matches.filter(item =>
-          item.type === "місто"
-        );
-
-        if (cities.length === 1) {
-          matches = cities;
-        }
-      }
-
-      const regions = [...new Set(
-        matches
-          .map(item => item.oblast)
-          .filter(Boolean)
-      )];
-
-      let region = regions.length === 1
-        ? regions[0]
-        : unknown;
-
-      // Київ у КАТОТТГ має порожнє поле області.
-      if (
-        matches.some(item =>
-          norm(item.name) === "київ" &&
-          item.type === "місто"
-        ) &&
-        matches.every(item => item.type === "місто")
-      ) {
-        region = "м. Київ";
-      }
-
+    function parseLocation(address, objectName, savedRegion) {
       return {
-        region,
-        city: matches[0]?.name || name || unknown
+        region: savedRegion?.trim() || "Не визначено",
+        city: cleanSettlementName(objectName)
       };
     }
 
     function locationRows() {
       return registryRows.map(row => ({
         ...row,
-        location: parseLocation(row.address, row.objectName)
+        location: parseLocation(row.address, row.objectName, row.region)
       }));
     }
 
@@ -589,7 +412,7 @@
         const matchesSearch = !query || Object.values(row)
           .some(value => String(value).toLocaleLowerCase("uk").includes(query));
 
-        const location = parseLocation(row.address, row.objectName);
+        const location = parseLocation(row.address, row.objectName, row.region);
 
         const matchesRegion =
           !selectedRegions.size || selectedRegions.has(location.region);
@@ -780,7 +603,7 @@
         id: c.id,
         tt: c.tt_code || "—",
         address: c.address || "—",
-        objectName: c.object_name || "",
+        region: c.region || "",
         area: areaAmount === null || !Number.isFinite(areaAmount)
           ? "—" : moneyFormat.format(areaAmount),
         pricePerSqm: formatMoney(pricePerSqm),
@@ -859,6 +682,7 @@
       ["Основні дані", [
         ["tt_code", "Код ТТ"], ["contract_number", "№ договору"],
         ["contract_type", "Вид"], ["object_name", "Об’єкт"],
+        ["region", "Область"],
         ["address", "Адреса"], ["area_sqm", "Площа, м²"],
         ["contract_status", "Статус"], ["verification_status", "Перевірка"]
       ]],
@@ -884,9 +708,33 @@
       const caption = document.createElement("span");
       caption.textContent = label;
       const large = String(value ?? "").length > 90 || /address|notes|renewal_terms/.test(key);
-      const input = large ? document.createElement("textarea") : document.createElement("input");
+      const input = key === "region"
+        ? document.createElement("select")
+        : large
+          ? document.createElement("textarea")
+          : document.createElement("input");
+
+      if (key === "region") {
+        const blank = document.createElement("option");
+        blank.value = "";
+        blank.textContent = "Не визначено";
+        input.append(blank);
+
+        for (const region of availableRegions) {
+          const option = document.createElement("option");
+          option.value = region;
+          option.textContent = region;
+          input.append(option);
+        }
+      }
       const numericField = ["area_sqm", "rent_f1", "rent_f2"].includes(key);
-      if (!large) input.type = /_date$/.test(key) ? "date" : numericField ? "number" : "text";
+      if (!large && key !== "region") {
+        input.type = /_date$/.test(key)
+          ? "date"
+          : numericField
+            ? "number"
+            : "text";
+      }
       if (numericField) {
         input.step = "0.01";
         input.min = "0";
@@ -1071,6 +919,7 @@
           contract_number: "№ договору",
           contract_type: "Вид договору",
           object_name: "Об'єкт",
+          region: "Область",
           address: "Адреса",
           landlord: "Орендодавець",
           tenant: "Орендар",
@@ -1201,7 +1050,9 @@
           addContractSection("Основні дані", [
             ["ID договору", c.id], ["Код ТТ", c.tt_code],
             ["№ договору", c.contract_number], ["Вид", c.contract_type],
-            ["Об’єкт", c.object_name], ["Адреса", c.address],
+            ["Об’єкт", c.object_name],
+            ["Область", c.region || "Не визначено"],
+            ["Адреса", c.address],
             ["Площа, м²", c.area_sqm], ["Статус", c.contract_status],
             ["Перевірка", c.verification_status]
           ]),
@@ -1295,8 +1146,6 @@
         if (!response.ok || !data.ok) {
           throw new Error(data.error || "Не вдалося отримати договори");
         }
-
-        await loadSettlements();
         
         registryRows = data.contracts.map(mapContract);
         contractsRaw = new Map(data.contracts.map(contract => [contract.id, contract]));
