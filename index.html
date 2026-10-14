@@ -201,6 +201,131 @@
     let registryRows = [];
 
     const expanded = new Set();
+
+    let sortField = null;
+    let sortDirection = 0;
+
+    const numericSortFields = new Set([
+      "area", "pricePerSqm", "f1", "f2", "rentTotal"
+    ]);
+
+    const dateSortFields = new Set([
+      "signed", "started", "ends"
+    ]);
+
+    const sortCollator = new Intl.Collator("uk", {
+      numeric: true,
+      sensitivity: "base"
+    });
+
+    function sortValue(row, key) {
+      const value = row[key];
+
+      if (
+        value === null ||
+        value === undefined ||
+        String(value).trim() === "" ||
+        value === "—"
+      ) {
+        return null;
+      }
+
+      if (numericSortFields.has(key)) {
+        const number = Number(
+          String(value)
+            .replace(/[\s\u00A0\u202F]/g, "")
+            .replace(",", ".")
+        );
+
+        return Number.isFinite(number) ? number : null;
+      }
+
+      if (dateSortFields.has(key)) {
+        const match = String(value).match(
+          /^(\d{2})\.(\d{2})\.(\d{4})$/
+        );
+
+        return match
+          ? `${match[3]}-${match[2]}-${match[1]}`
+          : null;
+      }
+
+      return String(value).trim();
+    }
+
+    function toggleSort(key) {
+      if (sortField !== key) {
+        sortField = key;
+        sortDirection = 1;
+      } else if (sortDirection === 1) {
+        sortDirection = -1;
+      } else {
+        sortField = null;
+        sortDirection = 0;
+      }
+
+      render();
+    }
+
+    function createSortableHeader(label, key, className = "") {
+      const th = document.createElement("th");
+      th.className = className;
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "sort-header-button";
+
+      const text = document.createElement("span");
+      text.textContent = label;
+
+      const arrow = document.createElement("span");
+      arrow.className = "sort-arrow";
+      arrow.textContent =
+        sortField === key
+          ? sortDirection === 1 ? "↑" : "↓"
+          : "↕";
+
+      button.classList.toggle("is-sorted", sortField === key);
+      button.title = `Сортувати: ${label}`;
+
+      button.append(text, arrow);
+      button.addEventListener("click", () => toggleSort(key));
+
+      th.append(button);
+
+      return th;
+    }
+
+    function sortRows(rows) {
+      if (!sortField || !sortDirection) {
+        return rows;
+      }
+
+      return [...rows].sort((a, b) => {
+        const left = sortValue(a, sortField);
+        const right = sortValue(b, sortField);
+
+        if (left === null && right === null) {
+          return sortCollator.compare(a.id, b.id);
+        }
+
+        if (left === null) return 1;
+        if (right === null) return -1;
+
+        let result;
+
+        if (typeof left === "number" && typeof right === "number") {
+          result = left - right;
+        } else {
+          result = sortCollator.compare(String(left), String(right));
+        }
+
+        return result === 0
+          ? sortCollator.compare(a.id, b.id)
+          : result * sortDirection;
+      });
+    }
+    
     const thead = document.querySelector("#registry thead");
     const tbody = document.querySelector("#registry tbody");
     const search = document.querySelector("#search");
@@ -364,13 +489,13 @@
       const secondHeadRow = document.createElement("tr");
 
       [
-        ["ID договору", "fixed-id"],
-        ["Код ТТ", "fixed-tt"],
-        ["Адреса", "fixed-address"],
-        ["Площа, м²", "data-col"],
-        ["Оренда, грн/м²", "data-col"]
-      ].forEach(([label, className]) => {
-        const th = cell("th", label, className);
+        ["ID договору", "id", "fixed-id"],
+        ["Код ТТ", "tt", "fixed-tt"],
+        ["Адреса", "address", "fixed-address"],
+        ["Площа, м²", "area", "data-col"],
+        ["Оренда, грн/м²", "pricePerSqm", "data-col"]
+      ].forEach(([label, key, className]) => {
+        const th = createSortableHeader(label, key, className);
         th.rowSpan = 2;
         firstHeadRow.append(th);
       });
@@ -398,8 +523,10 @@
           ? group.fields
           : [[group.summary, "Коротко"]];
 
-        visibleFields.forEach(([, label]) => {
-          secondHeadRow.append(cell("th", label, "data-col"));
+        visibleFields.forEach(([key, label]) => {
+          secondHeadRow.append(
+            createSortableHeader(label, key, "data-col")
+          );
         });
       });
 
@@ -407,7 +534,7 @@
 
       const query = search.value.trim().toLocaleLowerCase("uk");
       const selectedStatus = statusFilter.value;
-      const visibleRows = registryRows.filter(row => {
+      let visibleRows = registryRows.filter(row => {
         const matchesStatus = !selectedStatus || row.status === selectedStatus;
         const matchesSearch = !query || Object.values(row)
           .some(value => String(value).toLocaleLowerCase("uk").includes(query));
@@ -424,6 +551,8 @@
           matchesRegion && matchesCity;
       });
 
+      visibleRows = sortRows(visibleRows);
+      
       const fragment = document.createDocumentFragment();
 
       visibleRows.forEach(row => {
