@@ -211,6 +211,22 @@
     const selectedRegions = new Set();
     const selectedCities = new Set();
 
+    function syncLocationFilterFonts() {
+      const sourceStyle = window.getComputedStyle(statusFilter);
+
+      for (const id of ["regionFilterLabel", "cityFilterLabel"]) {
+        const element = document.getElementById(id);
+
+        element.style.fontFamily = sourceStyle.fontFamily;
+        element.style.fontSize = sourceStyle.fontSize;
+        element.style.fontWeight = sourceStyle.fontWeight;
+        element.style.letterSpacing = sourceStyle.letterSpacing;
+        element.style.color = sourceStyle.color;
+      }
+    }
+
+    syncLocationFilterFonts();    
+
     const regionNames = [
       "Вінницька", "Волинська", "Дніпропетровська",
       "Донецька", "Житомирська", "Закарпатська",
@@ -268,7 +284,7 @@
         }
 
         const match = part.match(
-          /^(?:м\.?\s*|місто\s+|с\.?\s+|село\s+|смт\.?\s*|селище\s+)([А-ЯІЇЄҐа-яіїєґ][А-ЯІЇЄҐа-яіїєґʼ’'\-\s]*)$/iu
+          /^(?:(?:місто|село|селище)\s+|(?:м|с|смт)\.\s*)([А-ЯІЇЄҐа-яіїєґ][А-ЯІЇЄҐа-яіїєґʼ’'\-\s]*)$/iu
         );
 
         if (!match) continue;
@@ -286,6 +302,19 @@
         }
       }
 
+      if (city !== unknown) {
+        city = city
+          .replace(/^(?:місто|істо|м\.|село|селище|смт\.?|с\.)\s+/iu, "")
+          .replace(/\s+/g, " ")
+          .trim();
+
+        if (
+          /(?:\bвул\.?|\bпр-т|\bпроспект|\bпровулок|\bбульвар|\bшосе)$/iu.test(city)
+        ) {
+          city = unknown;
+        }
+      }
+      
       if (/^київ$/iu.test(city) && region === unknown) {
         region = "м. Київ";
       }
