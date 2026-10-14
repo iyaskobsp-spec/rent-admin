@@ -528,8 +528,12 @@
       caption.textContent = label;
       const large = String(value ?? "").length > 90 || /address|notes|renewal_terms/.test(key);
       const input = large ? document.createElement("textarea") : document.createElement("input");
-      if (!large) input.type = /_date$/.test(key) ? "date" : key === "area_sqm" ? "number" : "text";
-      if (key === "area_sqm") input.step = "0.01";
+      const numericField = ["area_sqm", "rent_f1", "rent_f2"].includes(key);
+      if (!large) input.type = /_date$/.test(key) ? "date" : numericField ? "number" : "text";
+      if (numericField) {
+        input.step = "0.01";
+        input.min = "0";
+      }
       input.value = /_date$/.test(key) && value ? String(value).slice(0, 10) : String(value ?? "");
       input.dataset.editField = key;
       if (group) input.dataset.editGroup = group;
@@ -597,12 +601,19 @@
         if (group) {
           if (!grouped[group]) grouped[group] = { ...(contractSelected[group] || {}) };
           grouped[group][key] = value || null;
-        } else if (key === "area_sqm") {
-          if (value && (!Number.isFinite(Number(value)) || Number(value) < 0)) {
-            message.textContent = "Перевірте площу приміщення.";
+        } else if (["area_sqm", "rent_f1", "rent_f2"].includes(key)) {
+          const amount = Number(value);
+
+          if (value && (
+            !Number.isFinite(amount) ||
+            amount < 0 ||
+            (key !== "area_sqm" && Math.round(amount * 100) !== amount * 100)
+          )) {
+            message.textContent = `Перевірте значення поля ${key}.`;
             return;
           }
-          changes[key] = value ? Number(value) : null;
+
+          changes[key] = value ? amount : null;
         } else {
           changes[key] = value || null;
         }
