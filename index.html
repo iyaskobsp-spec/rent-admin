@@ -227,44 +227,122 @@
 
     syncLocationFilterFonts();    
 
-    const regionNames = [
-      "Вінницька", "Волинська", "Дніпропетровська",
-      "Донецька", "Житомирська", "Закарпатська",
-      "Запорізька", "Івано-Франківська", "Київська",
-      "Кіровоградська", "Луганська", "Львівська",
-      "Миколаївська", "Одеська", "Полтавська",
-      "Рівненська", "Сумська", "Тернопільська",
-      "Харківська", "Херсонська", "Хмельницька",
-      "Черкаська", "Чернівецька", "Чернігівська"
-    ];
+    let settlementsByName = new Map();
+
+    function normalizeLocation(value) {
+      return String(value || "")
+        .toLocaleLowerCase("uk")
+        .replace(/[ʼ’`]/g, "'")
+        .replace(/\s+/g, " ")
+        .trim();
+    }
+
+    async function loadSettlements() {
+      const response = await fetch("./settlements.csv");
+
+      if (!response.ok) {
+        throw new Error("Не вдалося завантажити довідник населених пунктів");
+      }
+
+      const csv = await response.text();
+      const lines = csv.replace(/^\uFEFF/, "").trim().split(/\r?\n/);
+      const headers = lines.shift().split(";").map(x => x.trim());
+      const index = name => headers.indexOf(name);
+
+      const nextMap = new Map();
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+
+        const columns = line.split(";");
+        const name = columns[index("name")]?.trim();
+        const type = columns[index("type")]?.trim();
+        const oblast = columns[index("oblast")]?.trim();
+        const raion = columns[index("raion")]?.trim();
+        const hromada = columns[index("hromada")]?.trim();
+
+        if (!name) continue;
+
+        const key = normalizeLocation(name);
+
+        if (!nextMap.has(key)) nextMap.set(key, []);
+
+        nextMap.get(key).push({
+          name,
+          type: normalizeLocation(type),
+          oblast: oblast || (name === "Київ" && type === "місто" ? "м. Київ" : ""),
+          raion,
+          hromada
+        });
+      }
+
+      settlementsByName = nextMap;
+    }
 
     function parseLocation(address, objectName) {
       const unknown = "Не визначено";
+      const original = String(objectName || "").trim();
+      const addressText = String(address || "");
 
-      const city = String(objectName || "")
-        .trim()
-        .replace(/^(?:м\.?\s*|місто\s+|с\.?\s*|село\s+|смт\.?\s*|селище\s+)/iu, "")
-        .replace(/\s+/g, " ")
-        .trim() || unknown;
+      const typeMatch = original.match(
+        /^(місто|село|селище|смт|м\.|с\.)\s*/iu
+      );
 
-      const text = String(address || "").toLocaleLowerCase("uk");
-      let region = unknown;
+      const typeHint = typeMatch
+        ? normalizeLocation(typeMatch[1])
+        : "";
 
-      for (const name of regionNames) {
-        const root = name.toLocaleLowerCase("uk").slice(0, 5);
+      const cityName = original
+        .replace(/^(?:місто|село|селище|смт\.?|м\.|с\.)\s*/iu, "")
+        .trim();
 
-        if (
-          text.includes(root) &&
-          /обл(?:асть|\.|асті)?/iu.test(text)
-        ) {
-          region = name;
+      const candidates = settlementsByName.get(
+        normalizeLocation(cityName)
+      ) || [];
+
+      const addressSegments = addressText.split(/[,;()]/);
+      let explicitRegion = "";
+
+      for (const segment of addressSegments) {
+        const match = normalizeLocation(segment).match(
+          /^(.*?)\s+обл(?:асть|асті|\.)?\.?$/
+        );
+
+        if (match) {
+          explicitRegion = match[1]
+            .replace(/\s+/g, " ")
+            .trim();
           break;
         }
       }
 
-      if (city.toLocaleLowerCase("uk") === "київ") {
-        region = "м. Київ";
+      let matches = candidates;
+
+      if (typeHint === "м." || typeHint === "місто") {
+        matches = matches.filter(item => item.type === "місто");
+      } else if (typeHint === "с." || typeHint === "село") {
+        matches = matches.filter(item => item.type === "село");
+      } else if (typeHint === "смт" || typeHint === "селище") {
+        matches = matches.filter(item => item.type.includes("селище"));
       }
+
+      if (explicitRegion) {
+        matches = matches.filter(item =>
+          normalizeLocation(item.oblast).startsWith(explicitRegion)
+        );
+      }
+
+      const regions = [...new Set(
+        matches.map(item => item.oblast).filter(Boolean)
+      )];
+
+      const region = regions.length === 1
+        ? regions[0]
+        : unknown;
+
+      const city = matches.length && (region !== unknown)
+        ? matches[0].name
+        : unknown;
 
       return { region, city };
     }
@@ -1130,6 +1208,8 @@
           throw new Error(data.error || "Не вдалося отримати договори");
         }
 
+        await loadSettlements();
+        
         registryRows = data.contracts.map(mapContract);
         contractsRaw = new Map(data.contracts.map(contract => [contract.id, contract]));
         contractsLoaded = true;
