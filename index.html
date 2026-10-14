@@ -278,7 +278,15 @@
 
       let city = unknown;
 
-      for (const part of parts) {
+      const cityInBrackets = text.match(
+        /\(\s*(?:м\.?\s*|місто\s+|с\.?\s*|село\s+|смт\.?\s*|селище\s+)([^()]+?)\s*\)/iu
+      );
+
+      if (cityInBrackets) {
+        city = cityInBrackets[1].trim();
+      }
+      
+      for (const part of city === unknown ? parts : []) {
         if (streetWords.test(part) || administrativeWords.test(part)) {
           continue;
         }
