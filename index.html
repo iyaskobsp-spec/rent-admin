@@ -150,7 +150,11 @@
         summary: "paymentNotesSummary",
         fields: [
           ["rent", "Орендна плата (джерело)"],
-          ["paymentNotes", "Умови та примітки"]
+          ["f1Source", "Ф1 / б/н (умови)"],
+          ["f2ttSource", "Ф2 / нал. ТТ (умови)"],
+          ["f2cashSource", "Ф2 / нал. каса (умови)"],
+          ["due", "Строк / дата оплати"],
+          ["paymentNotes", "Інші умови та примітки"]
         ]
       },
       {
@@ -447,9 +451,19 @@
         due,
         paymentSummary: formatMoney(rentTotal),
 
+        f1Source: f1,
+        f2ttSource: f2tt,
+        f2cashSource: f2cash,
+
         paymentNotes: Object.entries(payment)
           .filter(([key, value]) =>
-            key !== "Орендна плата (джерело)" &&
+            ![
+              "Орендна плата (джерело)",
+              "Ф1 / б/н",
+              "Ф2 / нал. ТТ",
+              "Ф2 / нал. каса",
+              "Строк/дата оплати"
+            ].includes(key) &&
             value !== null &&
             value !== undefined &&
             value !== ""
