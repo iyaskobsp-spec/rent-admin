@@ -279,7 +279,7 @@
       let city = unknown;
 
       const cityInBrackets = text.match(
-        /\(\s*(?:м\.?\s*|місто\s+|с\.?\s*|село\s+|смт\.?\s*|селище\s+)([^()]+?)\s*\)/iu
+        /\(\s*(?:(?:місто|село|селище)\s+|(?:м|с|смт)\.\s*)([^()]+?)\s*\)/iu
       );
 
       if (cityInBrackets) {
