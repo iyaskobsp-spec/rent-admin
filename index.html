@@ -51,9 +51,6 @@
       <button id="importExcelBtn" type="button">
         Імпортувати Excel
       </button>
-      <button id="updateRentBtn" type="button">
-        Оновити Ф1/Ф2
-      </button>
       <span id="importResult" role="status" aria-live="polite"></span>
     </div>
     
@@ -355,73 +352,6 @@
         button.disabled = false;
       }
     });
-
-    document.querySelector("#updateRentBtn").addEventListener("click", async () => {
-      const file = document.querySelector("#excelFile").files[0];
-      const tokenInput = document.querySelector("#importToken");
-      const token = tokenInput.value.trim();
-      const result = document.querySelector("#importResult");
-      const button = document.querySelector("#updateRentBtn");
-
-      if (!file || !token) {
-        result.textContent = "Виберіть Excel і введіть ключ імпорту.";
-        return;
-      }
-
-      if (!file.name.toLowerCase().endsWith(".xlsx")) {
-        result.textContent = "Потрібен файл формату .xlsx";
-        return;
-      }
-
-      const confirmed = confirm(
-        "Оновити суми Ф1 та Ф2 у договорах відповідно до Excel? " +
-        "Інші дані договорів залишаться без змін."
-      );
-
-      if (!confirmed) return;
-
-      const formData = new FormData();
-      formData.append("file", file);
-
-      button.disabled = true;
-      result.textContent = "Оновлюємо суми Ф1/Ф2...";
-
-      try {
-        const response = await fetch(
-          "https://rent-admin-production.up.railway.app/api/contracts/update-rent",
-          {
-            method: "POST",
-            headers: { "x-import-token": token },
-            body: formData
-          }
-        );
-
-        const data = await response.json();
-
-        if (!response.ok || !data.ok) {
-          throw new Error(data.error || "Помилка оновлення сум");
-        }
-
-        result.textContent =
-          `Отримано: ${data.received}. ` +
-          `Оновлено: ${data.updated}. ` +
-          `Без змін: ${data.unchanged}.`;
-
-        await loadContracts();
-
-        result.textContent =
-          `Ф1/Ф2 оновлено. ` +
-          `Договорів: ${data.received}, ` +
-          `змінено: ${data.updated}, ` +
-          `без змін: ${data.unchanged}.`;
-
-      } catch (error) {
-        result.textContent = "Помилка: " + error.message;
-      } finally {
-        tokenInput.value = "";
-        button.disabled = false;
-      }
-    });    
 
     function formatDate(value) {
       if (!value) return "—";
