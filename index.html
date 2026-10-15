@@ -216,6 +216,7 @@
       </details>
 
       <button id="clearLocationFilters" type="button">Скинути область / місто</button>
+      <button id="exportExcelBtn" type="button">Експорт Excel ↓</button>
       <span class="count" id="count"></span>
     </div>
 
@@ -343,6 +344,7 @@
     ];
 
     let registryRows = [];
+    let exportVisibleRows = [];
 
     const expanded = new Set();
 
@@ -695,9 +697,10 @@
           matchesRegion && matchesCity;
       });
 
-      visibleRows = sortRows(visibleRows);
-      
-      const fragment = document.createDocumentFragment();
+       visibleRows = sortRows(visibleRows);
+       exportVisibleRows = [...visibleRows];
+
+       const fragment = document.createDocumentFragment();
 
       visibleRows.forEach(row => {
         const tr = document.createElement("tr");
