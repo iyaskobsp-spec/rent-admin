@@ -658,3 +658,24 @@ button.module-card:hover {
   outline-offset: 3px;
   border-radius: 2px;
 }
+
+#downloadTemplateBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 40px;
+  padding: 0 15px;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #233b5a;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+#downloadTemplateBtn:hover {
+  background: #edf3fa;
+  border-color: #b7cbe3;
+}
