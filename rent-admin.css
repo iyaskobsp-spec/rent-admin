@@ -881,3 +881,246 @@ button.module-card:hover {
     padding: 27px 20px;
   }
 }
+
+
+/* Модуль користувачів */
+
+#usersModule[hidden],
+#openUsersBtn[hidden],
+#newRentUserCredentials[hidden] {
+  display: none !important;
+}
+
+.rent-users-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.rent-users-card {
+  padding: 24px;
+  border: 1px solid #dce5f0;
+  border-radius: 16px;
+  background: #fff;
+  box-shadow: 0 4px 18px rgba(29, 48, 79, 0.045);
+}
+
+.rent-users-card h2 {
+  margin: 0 0 20px;
+  color: #203956;
+  font-size: 17px;
+}
+
+.rent-users-form {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.rent-users-form label {
+  margin-top: 8px;
+  color: #40546c;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rent-users-form input,
+.rent-users-form select,
+.rent-user-controls select {
+  width: 100%;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #233247;
+  font: inherit;
+  font-size: 13px;
+}
+
+#addRentUserBtn {
+  height: 42px;
+  margin-top: 15px;
+  padding: 0 15px;
+  border: 0;
+  border-radius: 9px;
+  background: #233b5a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+#addRentUserBtn:disabled {
+  opacity: 0.55;
+}
+
+.rent-users-message {
+  margin: 14px 0 0;
+  color: #526b87;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rent-users-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.rent-users-list-header span {
+  color: #78869a;
+  font-size: 12px;
+}
+
+.rent-users-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.rent-user-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 17px 0;
+  border-top: 1px solid #e8edf3;
+}
+
+.rent-user-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 180px;
+}
+
+.rent-user-info strong {
+  color: #233247;
+  font-size: 13px;
+}
+
+.rent-user-info span {
+  color: #607087;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.rent-user-info small {
+  color: #8a98a9;
+  font-size: 11px;
+}
+
+.rent-user-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rent-user-controls select {
+  width: 140px;
+  height: 36px;
+}
+
+.rent-user-action {
+  min-height: 36px;
+  padding: 7px 11px;
+  border: 1px solid #d9e1eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #294667;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rent-user-action:hover:not(:disabled) {
+  background: #edf3fa;
+}
+
+.rent-user-danger {
+  color: #a12f3c;
+  border-color: #e7b7bd;
+}
+
+.rent-user-danger:hover:not(:disabled) {
+  background: #fff1f2;
+}
+
+.rent-user-action:disabled,
+.rent-user-controls select:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rent-temp-password {
+  margin-top: 20px;
+  padding: 15px;
+  border: 1px solid #d9e1eb;
+  border-radius: 10px;
+  background: #f6f9fd;
+}
+
+.rent-temp-password strong {
+  font-size: 13px;
+  color: #233b5a;
+}
+
+.rent-temp-password p {
+  color: #607087;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.rent-temp-password-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 12px 0;
+}
+
+.rent-temp-password-row code {
+  padding: 10px;
+  border-radius: 7px;
+  background: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  user-select: all;
+}
+
+.rent-temp-password button {
+  padding: 9px 12px;
+  border: 1px solid #cfdbe9;
+  border-radius: 8px;
+  background: #fff;
+  color: #294667;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+@media (max-width: 950px) {
+  .rent-users-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .rent-users-card {
+    padding: 17px;
+  }
+
+  .rent-user-row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .rent-user-controls {
+    width: 100%;
+  }
+
+  .rent-user-controls select {
+    width: 100%;
+  }
+}
