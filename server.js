@@ -343,6 +343,351 @@ app.post(
   }
 );
 
+
+function rentRequireAdmin(req, res, next) {
+  if (req.rentUser.must_change_password) {
+    return res.status(403).json({
+      ok: false,
+      error: "Спочатку змініть тимчасовий пароль"
+    });
+  }
+
+  if (req.rentUser.role !== "admin") {
+    return res.status(403).json({
+      ok: false,
+      error: "Доступ лише для адміністратора"
+    });
+  }
+
+  next();
+}
+
+const rentAdminAccess = [rentRequireSession, rentRequireAdmin];
+
+function rentUserDetails(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    isActive: user.is_active,
+    mustChangePassword: user.must_change_password,
+    createdAt: user.created_at
+  };
+}
+
+function rentGenerateTempPassword() {
+  const alphabet =
+    "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+
+  const bytes = rentCrypto.randomBytes(10);
+
+  return [...bytes]
+    .map(byte => alphabet[byte % alphabet.length])
+    .join("");
+}
+
+app.get("/api/auth/users", ...rentAdminAccess, async (req, res, next) => {
+  try {
+    const result = await pool.query(`
+      SELECT id, name, email, role, is_active,
+             must_change_password, created_at
+      FROM rent_users
+      ORDER BY created_at DESC, id DESC
+    `);
+
+    res.json({
+      ok: true,
+      users: result.rows.map(rentUserDetails)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/auth/users", ...rentAdminAccess, async (req, res, next) => {
+  try {
+    const name = String(req.body?.name || "").trim();
+    const email = String(req.body?.email || "").trim().toLowerCase();
+    const role = String(req.body?.role || "viewer");
+
+    if (
+      !name || name.length > 150 ||
+      email.length > 254 ||
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ||
+      !["admin", "editor", "viewer"].includes(role)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Перевірте ПІБ, email і роль користувача"
+      });
+    }
+
+    const tempPassword = rentGenerateTempPassword();
+    const passwordHash = await hashRentPassword(tempPassword);
+
+    const result = await pool.query(
+      `INSERT INTO rent_users (
+         name, email, password_hash, role,
+         is_active, must_change_password
+       )
+       VALUES ($1, $2, $3, $4, TRUE, TRUE)
+       RETURNING id, name, email, role, is_active,
+                 must_change_password, created_at`,
+      [name, email, passwordHash, role]
+    );
+
+    res.status(201).json({
+      ok: true,
+      user: rentUserDetails(result.rows[0]),
+      tempPassword
+    });
+  } catch (error) {
+    if (error.code === "23505") {
+      return res.status(409).json({
+        ok: false,
+        error: "Користувач із таким email уже існує"
+      });
+    }
+
+    next(error);
+  }
+});
+
+app.patch("/api/auth/users/:id", ...rentAdminAccess, async (req, res, next) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isSafeInteger(id) || id < 1) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний ID користувача"
+    });
+  }
+
+  const name = req.body?.name;
+  const role = req.body?.role;
+  const active = req.body?.isActive;
+
+  if (
+    (name === undefined && role === undefined && active === undefined) ||
+    (name !== undefined &&
+      (typeof name !== "string" || !name.trim() || name.trim().length > 150)) ||
+    (role !== undefined && !["admin", "editor", "viewer"].includes(role)) ||
+    (active !== undefined && typeof active !== "boolean")
+  ) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректні дані користувача"
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    await client.query(
+      "SELECT pg_advisory_xact_lock(731092, 2026)"
+    );
+
+    const found = await client.query(
+      "SELECT * FROM rent_users WHERE id = $1 FOR UPDATE",
+      [id]
+    );
+
+    if (!found.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        ok: false,
+        error: "Користувача не знайдено"
+      });
+    }
+
+    const user = found.rows[0];
+    const nextRole = role === undefined ? user.role : role;
+    const nextActive = active === undefined ? user.is_active : active;
+
+    if (Number(user.id) === Number(req.rentUser.id) &&
+        (nextRole !== "admin" || !nextActive)) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        ok: false,
+        error: "Не можна заблокувати себе або зняти власні права адміністратора"
+      });
+    }
+
+    if (user.role === "admin" && user.is_active &&
+        (nextRole !== "admin" || !nextActive)) {
+      const admins = await client.query(
+        `SELECT COUNT(*)::integer AS total
+         FROM rent_users
+         WHERE role = 'admin' AND is_active = TRUE`
+      );
+
+      if (admins.rows[0].total <= 1) {
+        await client.query("ROLLBACK");
+        return res.status(400).json({
+          ok: false,
+          error: "У системі має залишитися хоча б один активний адміністратор"
+        });
+      }
+    }
+
+    const result = await client.query(
+      `UPDATE rent_users
+       SET name = $2,
+           role = $3,
+           is_active = $4,
+           session_version = session_version +
+             CASE WHEN role IS DISTINCT FROM $3::text
+                    OR is_active IS DISTINCT FROM $4::boolean
+                  THEN 1 ELSE 0 END
+       WHERE id = $1
+       RETURNING id, name, email, role, is_active,
+                 must_change_password, created_at`,
+      [
+        id,
+        name === undefined ? user.name : name.trim(),
+        nextRole,
+        nextActive
+      ]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      ok: true,
+      user: rentUserDetails(result.rows[0])
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post(
+  "/api/auth/users/:id/reset-password",
+  ...rentAdminAccess,
+  async (req, res, next) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id < 1) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний ID користувача"
+      });
+    }
+
+    try {
+      const tempPassword = rentGenerateTempPassword();
+      const hash = await hashRentPassword(tempPassword);
+
+      const result = await pool.query(
+        `UPDATE rent_users
+         SET password_hash = $2,
+             must_change_password = TRUE,
+             session_version = session_version + 1
+         WHERE id = $1
+         RETURNING id`,
+        [id, hash]
+      );
+
+      if (!result.rowCount) {
+        return res.status(404).json({
+          ok: false,
+          error: "Користувача не знайдено"
+        });
+      }
+
+      res.json({
+        ok: true,
+        tempPassword
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.delete(
+  "/api/auth/users/:id",
+  ...rentAdminAccess,
+  async (req, res, next) => {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id < 1) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний ID користувача"
+      });
+    }
+
+    if (id === Number(req.rentUser.id)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Не можна видалити власний обліковий запис"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        "SELECT pg_advisory_xact_lock(731092, 2026)"
+      );
+
+      const found = await client.query(
+        "SELECT * FROM rent_users WHERE id = $1 FOR UPDATE",
+        [id]
+      );
+
+      if (!found.rowCount) {
+        await client.query("ROLLBACK");
+        return res.status(404).json({
+          ok: false,
+          error: "Користувача не знайдено"
+        });
+      }
+
+      const user = found.rows[0];
+
+      if (user.role === "admin" && user.is_active) {
+        const admins = await client.query(
+          `SELECT COUNT(*)::integer AS total
+           FROM rent_users
+           WHERE role = 'admin' AND is_active = TRUE`
+        );
+
+        if (admins.rows[0].total <= 1) {
+          await client.query("ROLLBACK");
+          return res.status(400).json({
+            ok: false,
+            error: "Не можна видалити останнього активного адміністратора"
+          });
+        }
+      }
+
+      await client.query(
+        "DELETE FROM rent_users WHERE id = $1",
+        [id]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({ ok: true });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      next(error);
+    } finally {
+      client.release();
+    }
+  }
+);
+
 app.get("/api/contracts", async (req, res, next) => {
   try {
     if (!pool) {
