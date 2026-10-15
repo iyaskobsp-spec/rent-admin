@@ -688,6 +688,46 @@ app.delete(
   }
 );
 
+// Єдина перевірка авторизації та ролей для всіх маршрутів договорів
+app.use("/api/contracts", rentRequireSession, (req, res, next) => {
+  if (req.rentUser.must_change_password) {
+    return res.status(403).json({
+      ok: false,
+      error: "Спочатку змініть тимчасовий пароль"
+    });
+  }
+
+  const path = req.path;
+  const method = req.method;
+
+  const isReadOnly =
+    method === "GET";
+
+  const isPermanentDelete =
+    method === "DELETE" &&
+    /^\/CTR-\d+\/permanent$/.test(path);
+
+  if (isReadOnly) {
+    return next();
+  }
+
+  if (isPermanentDelete && req.rentUser.role !== "admin") {
+    return res.status(403).json({
+      ok: false,
+      error: "Видаляти договори може лише адміністратор"
+    });
+  }
+
+  if (!["admin", "editor"].includes(req.rentUser.role)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Недостатньо прав для зміни договорів"
+    });
+  }
+
+  next();
+});
+
 app.get("/api/contracts", async (req, res, next) => {
   try {
     if (!pool) {
@@ -717,30 +757,6 @@ app.get("/api/contracts", async (req, res, next) => {
 });
 
 app.post("/api/contracts/import", express.json({ limit: "5mb" }), async (req, res, next) => {
-  const importToken = process.env.RENT_IMPORT_TOKEN;
-  const suppliedToken = req.get("x-import-token");
-
-  if (!importToken) {
-    return res.status(503).json({
-      ok: false,
-      error: "Ключ імпорту не налаштований"
-    });
-  }
-
-  const crypto = require("node:crypto");
-  const expected = Buffer.from(importToken);
-  const received = Buffer.from(suppliedToken || "");
-
-  if (
-    expected.length !== received.length ||
-    !crypto.timingSafeEqual(expected, received)
-  ) {
-    return res.status(403).json({
-      ok: false,
-      error: "Доступ до імпорту заборонено"
-    });
-  }
-
   if (!pool) {
     return res.status(503).json({
       ok: false,
@@ -881,30 +897,7 @@ const excelUpload = multer({
 app.post(
   "/api/contracts/import-excel",
   excelUpload.single("file"),
-  async (req, res, next) => {
-    const crypto = require("node:crypto");
-    const token = process.env.RENT_IMPORT_TOKEN;
-    const supplied = req.get("x-import-token") || "";
-
-    if (!token) {
-      return res.status(503).json({
-        ok: false,
-        error: "Ключ імпорту не налаштовано"
-      });
-    }
-
-    const a = Buffer.from(token);
-    const b = Buffer.from(supplied);
-
-    if (
-      a.length !== b.length ||
-      !crypto.timingSafeEqual(a, b)
-    ) {
-      return res.status(403).json({
-        ok: false,
-        error: "Доступ заборонено"
-      });
-    }
+  async (req, res, next) => {    
 
     if (!pool) {
       return res.status(503).json({
@@ -1171,29 +1164,6 @@ app.post(
   "/api/contracts/update-rent",
   excelUpload.single("file"),
   async (req, res, next) => {
-    const crypto = require("node:crypto");
-    const token = process.env.RENT_IMPORT_TOKEN;
-    const supplied = req.get("x-import-token") || "";
-
-    if (!token) {
-      return res.status(503).json({
-        ok: false,
-        error: "Ключ імпорту не налаштовано"
-      });
-    }
-
-    const a = Buffer.from(token);
-    const b = Buffer.from(supplied);
-
-    if (
-      a.length !== b.length ||
-      !crypto.timingSafeEqual(a, b)
-    ) {
-      return res.status(403).json({
-        ok: false,
-        error: "Доступ заборонено"
-      });
-    }
 
     if (!pool || !req.file) {
       return res.status(400).json({
@@ -1355,16 +1325,7 @@ const NEW_RENT_HEADERS = [
   'Критичні умови / ДУ'
 ];
 
-app.post('/api/contracts/import-new-excel', excelUpload.single('file'), async (req, res, next) => {
-  const crypto = require('node:crypto');
-  const secret = process.env.RENT_IMPORT_TOKEN || '';
-  const provided = req.get('x-import-token') || '';
-  const a = Buffer.from(secret);
-  const b = Buffer.from(provided);
-
-  if (!secret || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
-    return res.status(403).json({ ok: false, error: 'Невірний ключ імпорту' });
-  }
+app.post('/api/contracts/import-new-excel', excelUpload.single('file'), async (req, res, next) => {  
 
   if (!pool) return res.status(503).json({ ok: false, error: 'База недоступна' });
   if (!req.file) return res.status(400).json({ ok: false, error: 'Не вибрано файл Excel' });
@@ -1660,32 +1621,7 @@ app.post('/api/contracts/import-new-excel', excelUpload.single('file'), async (r
   }
 });
 
-
-function checkRentActionToken(req, res) {
-  const crypto = require("node:crypto");
-  const expected = process.env.RENT_IMPORT_TOKEN || "";
-  const provided = req.get("x-import-token") || "";
-
-  const a = Buffer.from(expected);
-  const b = Buffer.from(provided);
-
-  if (
-    !expected ||
-    a.length !== b.length ||
-    !crypto.timingSafeEqual(a, b)
-  ) {
-    res.status(403).json({
-      ok: false,
-      error: "Невірний ключ редагування"
-    });
-    return false;
-  }
-
-  return true;
-}
-
 app.post("/api/contracts/:id/archive", async (req, res, next) => {
-  if (!checkRentActionToken(req, res)) return;
 
   if (!pool) {
     return res.status(503).json({
@@ -1724,7 +1660,6 @@ app.post("/api/contracts/:id/archive", async (req, res, next) => {
 });
 
 app.post("/api/contracts/:id/restore", async (req, res, next) => {
-  if (!checkRentActionToken(req, res)) return;
 
   if (!pool) {
     return res.status(503).json({
@@ -1763,7 +1698,6 @@ app.post("/api/contracts/:id/restore", async (req, res, next) => {
 });
 
 app.delete("/api/contracts/:id/permanent", async (req, res, next) => {
-  if (!checkRentActionToken(req, res)) return;
 
   if (!pool) {
     return res.status(503).json({
@@ -1869,29 +1803,6 @@ app.get("/api/contracts/:id/history", async (req, res, next) => {
 });
 
 app.patch("/api/contracts/:id", async (req, res, next) => {
-  const crypto = require("node:crypto");
-  const token = process.env.RENT_IMPORT_TOKEN;
-  const supplied = req.get("x-import-token") || "";
-
-  if (!token) {
-    return res.status(503).json({
-      ok: false,
-      error: "Ключ редагування не налаштований"
-    });
-  }
-
-  const expected = Buffer.from(token);
-  const received = Buffer.from(supplied);
-
-  if (
-    expected.length !== received.length ||
-    !crypto.timingSafeEqual(expected, received)
-  ) {
-    return res.status(403).json({
-      ok: false,
-      error: "Доступ до редагування заборонено"
-    });
-  }
 
   if (!pool) {
     return res.status(503).json({
