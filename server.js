@@ -728,6 +728,248 @@ app.use("/api/contracts", rentRequireSession, (req, res, next) => {
   next();
 });
 
+
+app.get("/api/contracts/export-excel", async (req, res, next) => {
+  try {
+    if (!pool) {
+      return res.status(503).json({
+        ok: false,
+        error: "База даних недоступна"
+      });
+    }
+
+    const idsParam = String(req.query.ids || "");
+    const ids = idsParam
+      ? idsParam.split(",").map(id => id.trim())
+      : [];
+
+    if (
+      ids.length > 500 ||
+      ids.some(id => !/^CTR-\d{4,}$/.test(id)) ||
+      new Set(ids).size !== ids.length
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний перелік договорів для експорту"
+      });
+    }
+
+    const archive = req.query.scope === "archive";
+
+    const result = ids.length
+      ? await pool.query(
+          `SELECT *
+           FROM rent_contracts
+           WHERE id = ANY($1::text[])
+             AND archived_at IS ${archive ? "NOT NULL" : "NULL"}
+           ORDER BY array_position($1::text[], id)`,
+          [ids]
+        )
+      : { rows: [] };
+
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = "Управління орендою";
+    workbook.created = new Date();
+
+    const sheet = workbook.addWorksheet(
+      archive ? "Архів договорів" : "Реєстр договорів",
+      {
+        views: [{ state: "frozen", ySplit: 1 }]
+      }
+    );
+
+    const columns = [
+      ["id", "ID договору", 17],
+      ["tt_code", "Код ТТ", 14],
+      ["contract_number", "№ договору", 22],
+      ["contract_type", "Вид договору", 22],
+      ["object_name", "Об'єкт / населений пункт", 30],
+      ["region", "Область", 23],
+      ["address", "Адреса", 45],
+      ["landlord", "Орендодавець", 35],
+      ["tenant", "Орендар", 35],
+      ["signed_date", "Дата підписання", 20],
+      ["start_date", "Початок оренди", 20],
+      ["opening_date", "Дата відкриття ТТ", 22],
+      ["end_date", "Дата закінчення", 20],
+      ["contract_status", "Статус договору", 25],
+      ["renewal_terms", "Умови пролонгації", 45],
+      ["area_sqm", "Площа, м²", 16],
+      ["rent_f1", "Ф1, грн", 18],
+      ["rent_f2", "Ф2, грн", 18],
+      ["rent_total", "Разом Ф1 + Ф2, грн", 22],
+      ["property_rights", "Права на приміщення", 35],
+      ["folder_url", "Папка документів", 48],
+      ["verification_status", "Статус перевірки", 24],
+      ["payment_terms", "Умови оплат / гарантійні платежі", 55],
+      ["contacts", "Контакти та реквізити", 45],
+      ["critical_terms", "Критичні умови / ДУ", 50],
+      ["notes", "Примітки", 45]
+    ];
+
+    sheet.columns = columns.map(([key, header, width]) => ({
+      header,
+      key,
+      width
+    }));
+
+    function exportDate(value) {
+      if (!value) return null;
+
+      const date = value instanceof Date
+        ? value.toISOString().slice(0, 10)
+        : String(value).slice(0, 10);
+
+      const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+      return match
+        ? `${match[3]}.${match[2]}.${match[1]}`
+        : date;
+    }
+
+    function exportObject(value) {
+      if (!value) return "";
+
+      if (typeof value === "string") {
+        try {
+          value = JSON.parse(value);
+        } catch {
+          return value;
+        }
+      }
+
+      if (typeof value !== "object" || Array.isArray(value)) {
+        return String(value);
+      }
+
+      return Object.entries(value)
+        .filter(([, item]) =>
+          item !== null &&
+          item !== undefined &&
+          String(item).trim() !== ""
+        )
+        .map(([key, item]) => `${key}: ${item}`)
+        .join("\n");
+    }
+
+    const dateKeys = new Set([
+      "signed_date", "start_date", "opening_date", "end_date"
+    ]);
+
+    const objectKeys = new Set([
+      "payment_terms", "contacts", "critical_terms"
+    ]);
+
+    for (const contract of result.rows) {
+      const f1 = contract.rent_f1 == null
+        ? null : Number(contract.rent_f1);
+
+      const f2 = contract.rent_f2 == null
+        ? null : Number(contract.rent_f2);
+
+      const total = f1 === null && f2 === null
+        ? null : (f1 || 0) + (f2 || 0);
+
+      const record = {};
+
+      for (const [key] of columns) {
+        let value;
+
+        if (key === "rent_total") {
+          value = total;
+        } else if (dateKeys.has(key)) {
+          value = exportDate(contract[key]);
+        } else if (objectKeys.has(key)) {
+          value = exportObject(contract[key]);
+        } else if (["area_sqm", "rent_f1", "rent_f2"].includes(key)) {
+          value = contract[key] == null
+            ? null : Number(contract[key]);
+        } else {
+          value = contract[key];
+        }
+
+        record[key] = value ?? "";
+      }
+
+      sheet.addRow(record);
+    }
+
+    const header = sheet.getRow(1);
+    header.height = 32;
+
+    header.eachCell(cell => {
+      cell.font = {
+        bold: true,
+        color: { argb: "FFFFFFFF" }
+      };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FF233B5A" }
+      };
+      cell.alignment = {
+        vertical: "middle",
+        wrapText: true
+      };
+    });
+
+    for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber++) {
+      const row = sheet.getRow(rowNumber);
+
+      row.eachCell({ includeEmpty: true }, cell => {
+        cell.alignment = {
+          vertical: "top",
+          wrapText: true
+        };
+        cell.border = {
+          bottom: {
+            style: "hair",
+            color: { argb: "FFE1E8F1" }
+          }
+        };
+
+        if (rowNumber % 2 === 0) {
+          cell.fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: "FFF5F8FC" }
+          };
+        }
+      });
+    }
+
+    for (const key of ["area_sqm", "rent_f1", "rent_f2", "rent_total"]) {
+      sheet.getColumn(key).numFmt = '#,##0.00';
+    }
+
+    sheet.autoFilter = {
+      from: { row: 1, column: 1 },
+      to: { row: Math.max(sheet.rowCount, 2), column: columns.length }
+    };
+
+    const buffer = await workbook.xlsx.writeBuffer();
+
+    const date = new Date().toISOString().slice(0, 10);
+    const filename = archive
+      ? `rent_archive_${date}.xlsx`
+      : `rent_registry_${date}.xlsx`;
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${filename}"`
+    );
+    res.setHeader("Cache-Control", "no-store");
+
+    return res.send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.get("/api/contracts", async (req, res, next) => {
   try {
     if (!pool) {
