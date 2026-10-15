@@ -679,3 +679,61 @@ button.module-card:hover {
   background: #edf3fa;
   border-color: #b7cbe3;
 }
+
+/* Основний реєстр / окремий архів */
+
+.archive-toggle-btn {
+  margin: 0 0 16px;
+  padding: 10px 15px;
+  background: #fff;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  color: #233b5a;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.archive-toggle-btn:hover {
+  background: #edf3fa;
+}
+
+#contractDeleteBtn {
+  padding: 10px 12px;
+  background: #fff;
+  border: 1px solid #e7b7bd;
+  border-radius: 9px;
+  color: #a12f3c;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#contractDeleteBtn:hover {
+  background: #fff1f2;
+}
+
+.contract-dialog-footer #contractArchiveBtn {
+  font-size: 12px;
+  padding: 10px 12px;
+}
+
+.contract-dialog-footer #contractArchiveBtn[hidden],
+.contract-dialog-footer #contractDeleteBtn[hidden] {
+  display: none !important;
+}
+
+.contract-edit-field select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #233247;
+  font: inherit;
+  font-size: 13px;
+}
+
+#importPanel[hidden] {
+  display: none !important;
+}
