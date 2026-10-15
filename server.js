@@ -88,6 +88,261 @@ app.get("/api/db-health", async (req, res, next) => {
   }
 });
 
+
+const rentCrypto = require("node:crypto");
+const { promisify: rentPromisify } = require("node:util");
+const rentScrypt = rentPromisify(rentCrypto.scrypt);
+
+const RENT_SESSION_HOURS = 12;
+const rentLoginAttempts = new Map();
+
+async function hashRentPassword(password) {
+  const salt = rentCrypto.randomBytes(16).toString("hex");
+  const hash = await rentScrypt(password, salt, 64);
+  return `scrypt:${salt}:${hash.toString("hex")}`;
+}
+
+async function verifyRentPassword(password, stored) {
+  const parts = String(stored || "").split(":");
+
+  if (parts.length !== 3 || parts[0] !== "scrypt") {
+    return false;
+  }
+
+  const expected = Buffer.from(parts[2], "hex");
+
+  if (expected.length !== 64) return false;
+
+  const actual = await rentScrypt(password, parts[1], 64);
+
+  return rentCrypto.timingSafeEqual(expected, actual);
+}
+
+function rentPublicUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    mustChangePassword: user.must_change_password
+  };
+}
+
+async function rentRequireSession(req, res, next) {
+  try {
+    const header = req.get("authorization") || "";
+    const match = header.match(/^Bearer ([a-f0-9]{64})$/i);
+
+    if (!match) {
+      return res.status(401).json({
+        ok: false,
+        error: "Потрібно увійти в систему"
+      });
+    }
+
+    const tokenHash = rentCrypto
+      .createHash("sha256")
+      .update(match[1])
+      .digest("hex");
+
+    const result = await pool.query(
+      `SELECT
+         s.id AS session_id,
+         u.id, u.name, u.email, u.role,
+         u.is_active, u.must_change_password
+       FROM rent_user_sessions s
+       JOIN rent_users u ON u.id = s.user_id
+       WHERE s.token_hash = $1
+         AND s.expires_at > NOW()
+         AND s.session_version = u.session_version
+         AND u.is_active = TRUE`,
+      [tokenHash]
+    );
+
+    if (!result.rowCount) {
+      return res.status(401).json({
+        ok: false,
+        error: "Сесія завершена. Увійдіть повторно."
+      });
+    }
+
+    req.rentUser = result.rows[0];
+    next();
+  } catch (error) {
+    next(error);
+  }
+}
+
+app.post("/api/auth/login", async (req, res, next) => {
+  try {
+    const email = String(req.body?.email || "")
+      .trim()
+      .toLowerCase();
+
+    const password = String(req.body?.password || "");
+
+    if (!email || !password || password.length > 1024) {
+      return res.status(400).json({
+        ok: false,
+        error: "Вкажіть email і пароль"
+      });
+    }
+
+    const attemptKey = `${req.ip}:${email}`;
+    const now = Date.now();
+    const attempt = rentLoginAttempts.get(attemptKey);
+
+    if (attempt && attempt.until > now && attempt.count >= 5) {
+      return res.status(429).json({
+        ok: false,
+        error: "Забагато спроб. Спробуйте через 15 хвилин."
+      });
+    }
+
+    const result = await pool.query(
+      `SELECT *
+       FROM rent_users
+       WHERE email = $1 AND is_active = TRUE`,
+      [email]
+    );
+
+    const user = result.rows[0];
+
+    const valid = user
+      ? await verifyRentPassword(password, user.password_hash)
+      : false;
+
+    if (!valid) {
+      const current = attempt && attempt.until > now
+        ? attempt.count : 0;
+
+      rentLoginAttempts.set(attemptKey, {
+        count: current + 1,
+        until: now + 15 * 60 * 1000
+      });
+
+      return res.status(401).json({
+        ok: false,
+        error: "Неправильний email або пароль"
+      });
+    }
+
+    rentLoginAttempts.delete(attemptKey);
+
+    const token = rentCrypto.randomBytes(32).toString("hex");
+    const tokenHash = rentCrypto
+      .createHash("sha256")
+      .update(token)
+      .digest("hex");
+
+    await pool.query(
+      `INSERT INTO rent_user_sessions
+         (id, user_id, token_hash, expires_at, session_version)
+       VALUES (
+         $1, $2, $3,
+         NOW() + INTERVAL '12 hours',
+         $4
+       )`,
+      [
+        rentCrypto.randomUUID(),
+        user.id,
+        tokenHash,
+        user.session_version
+      ]
+    );
+
+    res.json({
+      ok: true,
+      token,
+      user: rentPublicUser(user)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.get("/api/auth/me", rentRequireSession, (req, res) => {
+  res.json({
+    ok: true,
+    user: rentPublicUser(req.rentUser)
+  });
+});
+
+app.post(
+  "/api/auth/change-password",
+  rentRequireSession,
+  async (req, res, next) => {
+    try {
+      const currentPassword = String(
+        req.body?.currentPassword || ""
+      );
+
+      const newPassword = String(
+        req.body?.newPassword || ""
+      );
+
+      if (newPassword.length < 4 || newPassword.length > 1024) {
+        return res.status(400).json({
+          ok: false,
+          error: "Пароль має містити мінімум 4 символи"
+        });
+      }
+
+      const result = await pool.query(
+        "SELECT password_hash FROM rent_users WHERE id = $1",
+        [req.rentUser.id]
+      );
+
+      const valid = await verifyRentPassword(
+        currentPassword,
+        result.rows[0]?.password_hash
+      );
+
+      if (!valid) {
+        return res.status(403).json({
+          ok: false,
+          error: "Поточний пароль неправильний"
+        });
+      }
+
+      const hash = await hashRentPassword(newPassword);
+
+      await pool.query(
+        `UPDATE rent_users
+         SET password_hash = $2,
+             must_change_password = FALSE,
+             session_version = session_version + 1
+         WHERE id = $1`,
+        [req.rentUser.id, hash]
+      );
+
+      res.json({
+        ok: true,
+        reloginRequired: true
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+app.post(
+  "/api/auth/logout",
+  rentRequireSession,
+  async (req, res, next) => {
+    try {
+      await pool.query(
+        "DELETE FROM rent_user_sessions WHERE id = $1",
+        [req.rentUser.session_id]
+      );
+
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
 app.get("/api/contracts", async (req, res, next) => {
   try {
     if (!pool) {
