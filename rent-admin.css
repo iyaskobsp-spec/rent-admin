@@ -1135,3 +1135,26 @@ button.module-card:hover {
 #contractCancelEditBtn[hidden] {
   display: none !important;
 }
+
+/* Експорт Excel */
+
+#exportExcelBtn {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid #233b5a;
+  border-radius: 9px;
+  background: #233b5a;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+#exportExcelBtn:hover:not(:disabled) {
+  background: #35567e;
+}
+
+#exportExcelBtn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
