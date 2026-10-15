@@ -746,6 +746,61 @@
       empty.hidden = visibleRows.length !== 0;
     }
 
+
+    document.querySelector("#exportExcelBtn").addEventListener(
+      "click",
+      async () => {
+        const button = document.querySelector("#exportExcelBtn");
+        const originalText = button.textContent;
+
+        button.disabled = true;
+        button.textContent = "Формуємо Excel...";
+
+        try {
+          const ids = exportVisibleRows.map(row => row.id);
+
+          const params = new URLSearchParams({
+            scope: archiveMode ? "archive" : "active",
+            ids: ids.join(",")
+          });
+
+          const response = await fetch(
+            `https://rent-admin-production.up.railway.app/api/contracts/export-excel?${params}`,
+            {
+              headers: {
+                Authorization: `Bearer ${rentSessionToken}`
+              }
+            }
+          );
+
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(data.error || "Не вдалося сформувати Excel");
+          }
+
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = archiveMode
+            ? "Архів_договорів_оренди.xlsx"
+            : "Реєстр_договорів_оренди.xlsx";
+
+          document.body.append(link);
+          link.click();
+          link.remove();
+
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+        } catch (error) {
+          alert("Помилка експорту: " + error.message);
+        } finally {
+          button.disabled = false;
+          button.textContent = originalText;
+        }
+      }
+    );
+    
     document.querySelector("#importExcelBtn").addEventListener("click", async () => {
       const file = document.querySelector("#excelFile").files[0];
       const result = document.querySelector("#importResult");
