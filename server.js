@@ -1179,13 +1179,6 @@ app.delete("/api/contracts/:id/permanent", async (req, res, next) => {
     });
   }
 
-  if (req.body?.confirmId !== req.params.id) {
-    return res.status(400).json({
-      ok: false,
-      error: "Підтвердьте точний ID договору"
-    });
-  }
-
   const client = await pool.connect();
 
   try {
