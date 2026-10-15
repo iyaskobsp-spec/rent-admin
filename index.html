@@ -185,7 +185,7 @@
 
     <div id="importPanel">
       <input id="excelFile" type="file" accept=".xlsx">
-      <input id="importToken" type="password" placeholder="Ключ імпорту" autocomplete="off">
+
       <button id="importExcelBtn" type="button">
         Імпортувати Excel
       </button>
@@ -247,7 +247,6 @@
         <footer class="contract-dialog-footer">
           <button id="contractDoneBtn" type="button" class="contract-secondary-btn">Закрити</button>
           <span id="contractEditMessage" class="contract-edit-message" role="status"></span>
-          <input id="contractEditToken" type="password" placeholder="Ключ редагування" autocomplete="off" hidden>
           <button id="contractCancelEditBtn" class="contract-secondary-btn" type="button" hidden>Скасувати зміни</button>
           <button id="contractArchiveBtn" class="contract-secondary-btn" type="button">Перенести в архів</button>
           <button id="contractDeleteBtn" class="contract-delete-btn" type="button">Видалити назавжди</button>
@@ -746,13 +745,11 @@
 
     document.querySelector("#importExcelBtn").addEventListener("click", async () => {
       const file = document.querySelector("#excelFile").files[0];
-      const tokenInput = document.querySelector("#importToken");
-      const token = tokenInput.value.trim();
       const result = document.querySelector("#importResult");
       const button = document.querySelector("#importExcelBtn");
 
-      if (!file || !token) {
-        result.textContent = "Виберіть Excel і введіть ключ імпорту.";
+      if (!file) {
+        result.textContent = "Виберіть файл Excel.";
         return;
       }
 
@@ -772,7 +769,9 @@
           "https://rent-admin-production.up.railway.app/api/contracts/import-new-excel",
           {
             method: "POST",
-            headers: { "x-import-token": token },
+            headers: {
+              Authorization: `Bearer ${rentSessionToken}`
+            },
             body: formData
           }
         );
@@ -792,7 +791,6 @@
       } catch (error) {
         result.textContent = "Помилка: " + error.message;
       } finally {
-        tokenInput.value = "";
         button.disabled = false;
       }
     });
@@ -1054,14 +1052,36 @@
       contractModalContent.append(grid);
     }
 
+    function rentCanEditContracts() {
+      return ["admin", "editor"].includes(rentCurrentUser?.role);
+    }
+
+    function rentCanDeleteContracts() {
+      return rentCurrentUser?.role === "admin";
+    }
+
+    function rentSyncImportPanel() {
+      document.querySelector("#importPanel").hidden =
+        archiveMode || !rentCanEditContracts();
+    }
+
     function setEditing(next) {
+      if (next && !rentCanEditContracts()) return;
+
       contractEditing = next;
-      document.querySelector("#contractEditBtn").hidden = next;
+
+      document.querySelector("#contractEditBtn").hidden =
+        next || !rentCanEditContracts();
+
       document.querySelector("#contractSaveBtn").hidden = !next;
       document.querySelector("#contractCancelEditBtn").hidden = !next;
-      document.querySelector("#contractEditToken").hidden = false;
-      document.querySelector("#contractArchiveBtn").hidden = next;
-      document.querySelector("#contractDeleteBtn").hidden = next;
+
+      document.querySelector("#contractArchiveBtn").hidden =
+        next || !rentCanEditContracts();
+
+      document.querySelector("#contractDeleteBtn").hidden =
+        next || !rentCanDeleteContracts();
+
       document.querySelector("#contractDoneBtn").hidden = next;
       document.querySelector(".contract-tabs").hidden = next;
       document.querySelector("#contractEditMessage").textContent = "";
@@ -1077,11 +1097,10 @@
     }
 
     async function saveContractEdit() {
-      const tokenInput = document.querySelector("#contractEditToken");
+      if (!rentCanEditContracts()) return;
+
       const message = document.querySelector("#contractEditMessage");
       const button = document.querySelector("#contractSaveBtn");
-      const token = tokenInput.value.trim();
-      if (!token) { message.textContent = "Введіть ключ редагування."; return; }
       const changes = {};
       const grouped = {};
       for (const input of contractModalContent.querySelectorAll("[data-edit-field]")) {
@@ -1114,7 +1133,14 @@
       try {
         const response = await fetch(
           `https://rent-admin-production.up.railway.app/api/contracts/${encodeURIComponent(contractSelected.id)}`,
-          { method: "PATCH", headers: { "Content-Type": "application/json", "x-import-token": token }, body: JSON.stringify(changes) }
+          {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${rentSessionToken}`
+            },
+            body: JSON.stringify(changes)
+          }
         );
         const result = await response.json();
         if (!response.ok || !result.ok) throw new Error(result.error || "Помилка збереження");
@@ -1122,7 +1148,6 @@
         contractsRaw.set(result.contract.id, result.contract);
         registryRows = [...contractsRaw.values()].map(mapContract);
         document.querySelector("#contractModalStatus").textContent = result.contract.contract_status || "Статус не вказано";
-        tokenInput.value = "";
         setEditing(false);
         render();
         message.textContent = "Зміни збережено в базі.";
@@ -1171,7 +1196,12 @@
 
       try {
         const response = await fetch(
-          `https://rent-admin-production.up.railway.app/api/contracts/${encodeURIComponent(contractId)}/history`
+          `https://rent-admin-production.up.railway.app/api/contracts/${encodeURIComponent(contractId)}/history`,
+          {
+            headers: {
+              Authorization: `Bearer ${rentSessionToken}`
+            }
+          }
         );
 
         const data = await response.json();
@@ -1382,24 +1412,17 @@
       document.body.classList.remove("contract-modal-open");
       contractSelected = null;
       contractEditing = false;
-      document.querySelector("#contractEditToken").value = "";
       if (contractPreviousFocus && contractPreviousFocus.isConnected) contractPreviousFocus.focus();
     }
 
 
     async function contractStorageAction(action) {
       if (!contractSelected) return;
+      if (!rentCanEditContracts()) return;
+      if (action === "delete" && !rentCanDeleteContracts()) return;
 
       const id = contractSelected.id;
-      const tokenInput = document.querySelector("#contractEditToken");
       const message = document.querySelector("#contractEditMessage");
-      const token = tokenInput.value.trim();
-
-      if (!token) {
-        message.textContent = "Введіть ключ редагування.";
-        tokenInput.focus();
-        return;
-      }
 
       if (action === "delete") {
         if (!confirm(`Видалити договір ${id} назавжди? Цю дію неможливо скасувати.`)) {
@@ -1429,7 +1452,7 @@
             method: action === "delete" ? "DELETE" : "POST",
             headers: {
               "Content-Type": "application/json",
-              "x-import-token": token
+              Authorization: `Bearer ${rentSessionToken}`
             },
             body: JSON.stringify(
               action === "delete" ? { confirmId: id } : {}
@@ -1500,7 +1523,12 @@
 
       try {
         const response = await fetch(
-          `https://rent-admin-production.up.railway.app/api/contracts${archiveMode ? "?scope=archive" : ""}`
+          `https://rent-admin-production.up.railway.app/api/contracts${archiveMode ? "?scope=archive" : ""}`,
+          {
+            headers: {
+              Authorization: `Bearer ${rentSessionToken}`
+            }
+          }
         );
         const data = await response.json();
 
@@ -1529,7 +1557,7 @@
       document.querySelector("#registryModule h1").textContent =
         archiveMode ? "Архівні договори оренди" : "Реєстр договорів оренди";
 
-      document.querySelector("#importPanel").hidden = archiveMode;
+      rentSyncImportPanel();
 
       search.value = "";
       statusFilter.value = "";
@@ -1849,6 +1877,11 @@
       document.querySelector("#openUsersBtn").hidden =
         user.role !== "admin";
 
+      rentSyncImportPanel();
+      if (!contractModal.hidden) {
+        setEditing(false);
+      }
+      
       document.querySelector("#rentAccountName").textContent =
         `${user.name} · ${
           user.role === "admin" ? "Адміністратор" :
