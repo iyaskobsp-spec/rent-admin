@@ -79,6 +79,15 @@
       <h1>Управління орендою</h1>
       <p class="subtitle">Реєстр договорів, бюджет та планування платежів</p>
       <div class="module-grid">
+        <button class="module-card" id="openUsersBtn" type="button" hidden>
+          <span class="module-card-icon">♙</span>
+          <span class="module-card-content">
+            <strong>Користувачі</strong>
+            <span>Співробітники, ролі та керування доступом</span>
+            <small>Відкрити модуль →</small>
+          </span>
+          <span class="module-card-state available">Активний</span>
+        </button>        
         <button class="module-card" id="openRegistryBtn" type="button">
           <span class="module-card-icon">▤</span>
           <span class="module-card-content">
@@ -107,6 +116,65 @@
       </div>
     </section>
 
+    <section id="usersModule" hidden>
+      <button id="backFromUsersBtn" class="back-to-modules" type="button">
+        ← До модулів
+      </button>
+
+      <h1>Користувачі</h1>
+      <p class="subtitle">Облікові записи співробітників та права доступу</p>
+
+      <div class="rent-users-layout">
+        <section class="rent-users-card">
+          <h2>Додати користувача</h2>
+
+          <form id="addRentUserForm" class="rent-users-form">
+            <label for="newRentUserName">ПІБ співробітника</label>
+            <input id="newRentUserName" type="text" required
+                   placeholder="Прізвище Ім'я" maxlength="150">
+
+            <label for="newRentUserEmail">Email</label>
+            <input id="newRentUserEmail" type="email" required
+                   placeholder="name@company.ua">
+
+            <label for="newRentUserRole">Роль</label>
+            <select id="newRentUserRole">
+              <option value="viewer">Перегляд</option>
+              <option value="editor">Редактор</option>
+              <option value="admin">Адміністратор</option>
+            </select>
+
+            <button type="submit" id="addRentUserBtn">
+              Створити користувача
+            </button>
+          </form>
+
+          <div id="newRentUserCredentials" class="rent-temp-password" hidden>
+            <strong>Тимчасовий пароль</strong>
+            <p>Скопіюй і передай співробітнику. Після закриття цього блоку пароль більше не показуватиметься.</p>
+            <div class="rent-temp-password-row">
+              <code id="newRentUserPassword"></code>
+              <button id="copyRentUserPassword" type="button">Копіювати</button>
+            </div>
+            <button id="dismissRentUserPassword" type="button">
+              Закрити
+            </button>
+          </div>
+
+          <p id="rentUsersMessage" class="rent-users-message" role="status"></p>
+        </section>
+
+        <section class="rent-users-card rent-users-list-card">
+          <div class="rent-users-list-header">
+            <h2>Співробітники</h2>
+            <span id="rentUsersCount"></span>
+          </div>
+
+          <div id="rentUsersList" class="rent-users-list"></div>
+        </section>
+      </div>
+    </section>
+    
     <section id="registryModule" hidden>
       <button id="backToModulesBtn" class="back-to-modules" type="button">← До модулів</button>
       <h1>Реєстр договорів оренди</h1>
@@ -1516,10 +1584,270 @@
       rentAuthMessage.textContent = "";
     }
 
+
+    const rentUsersModule = document.querySelector("#usersModule");
+    const rentUsersList = document.querySelector("#rentUsersList");
+    const rentUsersMessage = document.querySelector("#rentUsersMessage");
+    const rentCredentials = document.querySelector("#newRentUserCredentials");
+
+    function rentHideCredentials() {
+      document.querySelector("#newRentUserPassword").textContent = "";
+      rentCredentials.hidden = true;
+    }
+
+    function rentDisplayTempPassword(password) {
+      document.querySelector("#newRentUserPassword").textContent = password;
+      rentCredentials.hidden = false;
+    }
+
+    function rentRoleName(role) {
+      return role === "admin" ? "Адміністратор" :
+             role === "editor" ? "Редактор" : "Перегляд";
+    }
+
+    async function rentUsersApi(path, options = {}) {
+      return rentAuthRequest(path, options);
+    }
+
+    function rentUserActionButton(text, action, dangerous = false) {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = text;
+      button.className = dangerous
+        ? "rent-user-action rent-user-danger"
+        : "rent-user-action";
+
+      button.addEventListener("click", action);
+      return button;
+    }
+
+    async function rentUpdateUser(userId, changes) {
+      try {
+        rentUsersMessage.textContent = "Зберігаємо...";
+
+        await rentUsersApi(`/api/auth/users/${userId}`, {
+          method: "PATCH",
+          body: JSON.stringify(changes)
+        });
+
+        rentUsersMessage.textContent = "Зміни збережено.";
+        await rentLoadUsers();
+      } catch (error) {
+        rentUsersMessage.textContent = error.message;
+        await rentLoadUsers();
+      }
+    }
+
+    async function rentResetUserPassword(user) {
+      if (!confirm(`Скинути пароль користувача ${user.name}?`)) return;
+
+      try {
+        const data = await rentUsersApi(
+          `/api/auth/users/${user.id}/reset-password`,
+          { method: "POST" }
+        );
+
+        rentDisplayTempPassword(data.tempPassword);
+        rentUsersMessage.textContent =
+          `Новий тимчасовий пароль для ${user.name}.`;
+
+        await rentLoadUsers();
+      } catch (error) {
+        rentUsersMessage.textContent = error.message;
+      }
+    }
+
+    async function rentDeleteUser(user) {
+      if (!confirm(`Видалити користувача ${user.name}?`)) return;
+
+      try {
+        await rentUsersApi(`/api/auth/users/${user.id}`, {
+          method: "DELETE"
+        });
+
+        rentHideCredentials();
+        rentUsersMessage.textContent = "Користувача видалено.";
+        await rentLoadUsers();
+      } catch (error) {
+        rentUsersMessage.textContent = error.message;
+      }
+    }
+
+    function rentRenderUsers(users) {
+      rentUsersList.replaceChildren();
+
+      document.querySelector("#rentUsersCount").textContent =
+        `${users.length} користувачів`;
+
+      if (!users.length) {
+        rentUsersList.textContent = "Користувачів поки немає.";
+        return;
+      }
+
+      for (const user of users) {
+        const card = document.createElement("div");
+        card.className = "rent-user-row";
+
+        const info = document.createElement("div");
+        info.className = "rent-user-info";
+
+        const name = document.createElement("strong");
+        name.textContent = user.name;
+
+        const email = document.createElement("span");
+        email.textContent = user.email;
+
+        const state = document.createElement("small");
+        state.textContent = !user.isActive
+          ? "Заблокований"
+          : user.mustChangePassword
+            ? "Очікує зміни тимчасового пароля"
+            : "Активний";
+
+        info.append(name, email, state);
+
+        const controls = document.createElement("div");
+        controls.className = "rent-user-controls";
+
+        const roleSelect = document.createElement("select");
+        roleSelect.setAttribute("aria-label", `Роль ${user.name}`);
+
+        for (const role of ["viewer", "editor", "admin"]) {
+          const option = document.createElement("option");
+          option.value = role;
+          option.textContent = rentRoleName(role);
+          roleSelect.append(option);
+        }
+
+        roleSelect.value = user.role;
+        roleSelect.disabled = Number(user.id) === Number(rentCurrentUser?.id);
+
+        roleSelect.addEventListener("change", () => {
+          rentUpdateUser(user.id, { role: roleSelect.value });
+        });
+
+        const lockButton = rentUserActionButton(
+          user.isActive ? "Заблокувати" : "Розблокувати",
+          () => rentUpdateUser(user.id, { isActive: !user.isActive })
+        );
+
+        lockButton.disabled =
+          Number(user.id) === Number(rentCurrentUser?.id);
+
+        const resetButton = rentUserActionButton(
+          "Скинути пароль",
+          () => rentResetUserPassword(user)
+        );
+
+        const deleteButton = rentUserActionButton(
+          "Видалити",
+          () => rentDeleteUser(user),
+          true
+        );
+
+        deleteButton.disabled =
+          Number(user.id) === Number(rentCurrentUser?.id);
+
+        controls.append(roleSelect, lockButton, resetButton, deleteButton);
+        card.append(info, controls);
+        rentUsersList.append(card);
+      }
+    }
+
+    async function rentLoadUsers() {
+      try {
+        const data = await rentUsersApi("/api/auth/users");
+        rentRenderUsers(data.users);
+      } catch (error) {
+        rentUsersList.textContent =
+          `Не вдалося завантажити користувачів: ${error.message}`;
+      }
+    }
+
+    document.querySelector("#openUsersBtn").addEventListener(
+      "click",
+      async () => {
+        document.querySelector("#moduleHome").hidden = true;
+        document.querySelector("#registryModule").hidden = true;
+        rentUsersModule.hidden = false;
+
+        rentHideCredentials();
+        rentUsersMessage.textContent = "";
+        await rentLoadUsers();
+      }
+    );
+
+    document.querySelector("#backFromUsersBtn").addEventListener(
+      "click",
+      () => {
+        rentHideCredentials();
+        rentUsersModule.hidden = true;
+        document.querySelector("#moduleHome").hidden = false;
+      }
+    );
+
+    document.querySelector("#addRentUserForm").addEventListener(
+      "submit",
+      async event => {
+        event.preventDefault();
+
+        const button = document.querySelector("#addRentUserBtn");
+        button.disabled = true;
+        rentHideCredentials();
+        rentUsersMessage.textContent = "Створюємо користувача...";
+
+        try {
+          const data = await rentUsersApi("/api/auth/users", {
+            method: "POST",
+            body: JSON.stringify({
+              name: document.querySelector("#newRentUserName").value.trim(),
+              email: document.querySelector("#newRentUserEmail").value.trim(),
+              role: document.querySelector("#newRentUserRole").value
+            })
+          });
+
+          document.querySelector("#addRentUserForm").reset();
+          rentDisplayTempPassword(data.tempPassword);
+          rentUsersMessage.textContent =
+            `Користувача ${data.user.name} створено.`;
+
+          await rentLoadUsers();
+        } catch (error) {
+          rentUsersMessage.textContent = error.message;
+        } finally {
+          button.disabled = false;
+        }
+      }
+    );
+
+    document.querySelector("#copyRentUserPassword").addEventListener(
+      "click",
+      async () => {
+        const password =
+          document.querySelector("#newRentUserPassword").textContent;
+
+        try {
+          await navigator.clipboard.writeText(password);
+          rentUsersMessage.textContent = "Пароль скопійовано.";
+        } catch (error) {
+          rentUsersMessage.textContent =
+            "Не вдалося скопіювати. Виділіть пароль вручну.";
+        }
+      }
+    );
+
+    document.querySelector("#dismissRentUserPassword").addEventListener(
+      "click",
+      rentHideCredentials
+    );
+    
     function rentShowApplication(user) {
       rentCurrentUser = user;
       rentAuthScreen.hidden = true;
       rentMainPage.hidden = false;
+
+      document.querySelector("#openUsersBtn").hidden =
+        user.role !== "admin";
 
       document.querySelector("#rentAccountName").textContent =
         `${user.name} · ${
@@ -1643,7 +1971,10 @@
         rentShowLogin();
 
         document.querySelector("#registryModule").hidden = true;
+        document.querySelector("#usersModule").hidden = true;
         document.querySelector("#moduleHome").hidden = false;
+        rentUsersList.replaceChildren();
+        rentHideCredentials();
         contractsLoaded = false;
         registryRows = [];
         contractsRaw.clear();
