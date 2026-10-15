@@ -44,6 +44,9 @@
       <button id="backToModulesBtn" class="back-to-modules" type="button">← До модулів</button>
       <h1>Реєстр договорів оренди</h1>
       <p class="subtitle">Договори, умови оренди та контроль строків в одному реєстрі.</p>
+      <button id="toggleArchiveBtn" class="archive-toggle-btn" type="button">
+        Архівні договори
+      </button>      
 
     <div id="importPanel">
       <input id="excelFile" type="file" accept=".xlsx">
@@ -111,6 +114,8 @@
           <span id="contractEditMessage" class="contract-edit-message" role="status"></span>
           <input id="contractEditToken" type="password" placeholder="Ключ редагування" autocomplete="off" hidden>
           <button id="contractCancelEditBtn" class="contract-secondary-btn" type="button" hidden>Скасувати зміни</button>
+          <button id="contractArchiveBtn" class="contract-secondary-btn" type="button">Перенести в архів</button>
+          <button id="contractDeleteBtn" class="contract-delete-btn" type="button">Видалити назавжди</button>
           <button id="contractEditBtn" class="contract-primary-btn" type="button">Редагувати</button>
           <button id="contractSaveBtn" class="contract-primary-btn" type="button" hidden>Зберегти</button>
         </footer>
@@ -812,6 +817,7 @@
     let contractSelected = null;
     let contractPreviousFocus = null;
     let contractEditing = false;
+    let archiveMode = false;    
 
     const editSections = [
       ["Основні дані", [
@@ -918,12 +924,21 @@
       document.querySelector("#contractEditBtn").hidden = next;
       document.querySelector("#contractSaveBtn").hidden = !next;
       document.querySelector("#contractCancelEditBtn").hidden = !next;
-      document.querySelector("#contractEditToken").hidden = !next;
+      document.querySelector("#contractEditToken").hidden = false;
+      document.querySelector("#contractArchiveBtn").hidden = next;
+      document.querySelector("#contractDeleteBtn").hidden = next;
       document.querySelector("#contractDoneBtn").hidden = next;
       document.querySelector(".contract-tabs").hidden = next;
       document.querySelector("#contractEditMessage").textContent = "";
-      if (next) renderContractEditor();
-      else renderContractTab("main");
+
+      if (next) {
+        renderContractEditor();
+      } else {
+        document.querySelector("#contractArchiveBtn").textContent =
+          archiveMode ? "Повернути з архіву" : "Перенести в архів";
+
+        renderContractTab("main");
+      }
     }
 
     async function saveContractEdit() {
@@ -1236,6 +1251,90 @@
       if (contractPreviousFocus && contractPreviousFocus.isConnected) contractPreviousFocus.focus();
     }
 
+
+    async function contractStorageAction(action) {
+      if (!contractSelected) return;
+
+      const id = contractSelected.id;
+      const tokenInput = document.querySelector("#contractEditToken");
+      const message = document.querySelector("#contractEditMessage");
+      const token = tokenInput.value.trim();
+
+      if (!token) {
+        message.textContent = "Введіть ключ редагування.";
+        tokenInput.focus();
+        return;
+      }
+
+      if (action === "delete") {
+        const confirmedId = prompt(
+          `ОСТАТОЧНЕ ВИДАЛЕННЯ договору ${id} разом з історією.\nДля підтвердження введіть ID договору:`,
+          ""
+        );
+
+        if (confirmedId === null) return;
+
+        if (confirmedId.trim() !== id) {
+          message.textContent = "ID не збігається. Видалення скасовано.";
+          return;
+        }
+      } else {
+        const question = action === "archive"
+          ? `Перенести договір ${id} в архів?`
+          : `Повернути договір ${id} до основного реєстру?`;
+
+        if (!confirm(question)) return;
+      }
+
+      const button = document.querySelector(
+        action === "delete" ? "#contractDeleteBtn" : "#contractArchiveBtn"
+      );
+
+      button.disabled = true;
+      message.textContent = "Виконуємо операцію...";
+
+      try {
+        const path = action === "delete" ? "permanent" : action;
+
+        const response = await fetch(
+          `https://rent-admin-production.up.railway.app/api/contracts/${encodeURIComponent(id)}/${path}`,
+          {
+            method: action === "delete" ? "DELETE" : "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "x-import-token": token
+            },
+            body: JSON.stringify(
+              action === "delete" ? { confirmId: id } : {}
+            )
+          }
+        );
+
+        const result = await response.json();
+
+        if (!response.ok || !result.ok) {
+          throw new Error(result.error || "Дію не виконано");
+        }
+
+        closeContract();
+        await loadContracts();
+      } catch (error) {
+        message.textContent = `Помилка: ${error.message}`;
+      } finally {
+        button.disabled = false;
+      }
+    }
+
+    document.querySelector("#contractArchiveBtn").addEventListener(
+      "click",
+      () => contractStorageAction(archiveMode ? "restore" : "archive")
+    );
+
+    document.querySelector("#contractDeleteBtn").addEventListener(
+      "click",
+      () => contractStorageAction("delete")
+    );
+    
     document.querySelector("#contractEditBtn").addEventListener("click", () => setEditing(true));
     document.querySelector("#contractCancelEditBtn").addEventListener("click", () => setEditing(false));
     document.querySelector("#contractSaveBtn").addEventListener("click", saveContractEdit);
@@ -1274,7 +1373,7 @@
 
       try {
         const response = await fetch(
-          "https://rent-admin-production.up.railway.app/api/contracts"
+          `https://rent-admin-production.up.railway.app/api/contracts${archiveMode ? "?scope=archive" : ""}`
         );
         const data = await response.json();
 
@@ -1287,12 +1386,32 @@
         contractsLoaded = true;
         updateLocationFilters();
         render();
-        result.textContent = `У реєстрі ${registryRows.length} договорів.`;
+        result.textContent =
+          `${archiveMode ? "В архіві" : "У реєстрі"} ${registryRows.length} договорів.`;
       } catch (error) {
         result.textContent = "Помилка: " + error.message;
       }
     }
 
+    document.querySelector("#toggleArchiveBtn").addEventListener("click", async () => {
+      archiveMode = !archiveMode;
+
+      document.querySelector("#toggleArchiveBtn").textContent =
+        archiveMode ? "← До основного реєстру" : "Архівні договори";
+
+      document.querySelector("#registryModule h1").textContent =
+        archiveMode ? "Архівні договори оренди" : "Реєстр договорів оренди";
+
+      document.querySelector("#importPanel").hidden = archiveMode;
+
+      search.value = "";
+      statusFilter.value = "";
+      selectedRegions.clear();
+      selectedCities.clear();
+
+      await loadContracts();
+    });
+    
     document.querySelector("#openRegistryBtn").addEventListener("click", () => {
       document.querySelector("#moduleHome").hidden = true;
       document.querySelector("#registryModule").hidden = false;
