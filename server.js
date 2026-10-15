@@ -739,6 +739,324 @@ app.post(
   }
 );
 
+
+const NEW_RENT_HEADERS = [
+  'Код ТТ','№ договору','Вид договору','Об’єкт / населений пункт','Область','Адреса',
+  'Орендодавець','Орендар','Дата підписання','Початок оренди','Дата відкриття ТТ',
+  'Дата закінчення','Статус договору','Умови пролонгації','Площа, м²','Ф1, грн',
+  'Ф2, грн','Права на приміщення','Папка документів (URL)','Статус перевірки',
+  'Примітки','Контакт орендодавця','Телефон','Перенесення платежу',
+  'Орендна плата (джерело)','Ф1 / б/н (умови)','Ф2 / нал. ТТ (умови)',
+  'Ф2 / нал. каса (умови)','Строк/дата оплати','Комунальні послуги',
+  'Ввідна потужність, кВт','Гарантійний платіж','Інші умови оплат',
+  'Критичні умови / ДУ'
+];
+
+app.post('/api/contracts/import-new-excel', excelUpload.single('file'), async (req, res, next) => {
+  const crypto = require('node:crypto');
+  const secret = process.env.RENT_IMPORT_TOKEN || '';
+  const provided = req.get('x-import-token') || '';
+  const a = Buffer.from(secret);
+  const b = Buffer.from(provided);
+
+  if (!secret || a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(403).json({ ok: false, error: 'Невірний ключ імпорту' });
+  }
+
+  if (!pool) return res.status(503).json({ ok: false, error: 'База недоступна' });
+  if (!req.file) return res.status(400).json({ ok: false, error: 'Не вибрано файл Excel' });
+
+  try {
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(req.file.buffer);
+
+    if (workbook.worksheets.length !== 1 || workbook.worksheets[0].name !== 'Нові договори') {
+      return res.status(400).json({
+        ok: false,
+        error: 'Потрібен шаблон з одним аркушем «Нові договори»'
+      });
+    }
+
+    const sheet = workbook.worksheets[0];
+
+    const text = (row, col) => {
+      const cell = row.getCell(col);
+      const v = cell.value;
+
+      if (v == null) return null;
+      if (v instanceof Date) return v;
+
+      if (typeof v === 'object') {
+        if (v.result !== undefined) {
+          return v.result == null ? null : String(v.result).trim();
+        }
+        if (v.text !== undefined) return String(v.text).trim() || null;
+        return String(cell.text || '').trim() || null;
+      }
+
+      return String(v).trim() || null;
+    };
+
+    for (let col = 1; col <= NEW_RENT_HEADERS.length; col++) {
+      if (text(sheet.getRow(1), col) !== NEW_RENT_HEADERS[col - 1]) {
+        return res.status(400).json({
+          ok: false,
+          error: `Не збігається заголовок колонки ${col}. Скористайтеся шаблоном.`
+        });
+      }
+    }
+
+    function amount(v, line, col) {
+      if (v === null) return null;
+
+      const n = typeof v === 'number'
+        ? v
+        : Number(String(v).replace(/\s/g, '').replace(',', '.'));
+
+      if (
+        !Number.isFinite(n) ||
+        n < 0 ||
+        Math.abs(n * 100 - Math.round(n * 100)) > 1e-6
+      ) {
+        throw new Error(`Рядок ${line}: неправильне число в колонці ${col}`);
+      }
+
+      return n;
+    }
+
+    function date(v, line, col) {
+      if (v === null) return null;
+
+      let d;
+
+      if (v instanceof Date) {
+        d = v;
+      } else if (typeof v === 'number') {
+        d = new Date(Date.UTC(1899, 11, 30) + Math.round(v) * 86400000);
+      } else if (/^\d{2}\.\d{2}\.\d{4}$/.test(String(v))) {
+        const [dd, mm, yyyy] = String(v).split('.');
+        d = new Date(`${yyyy}-${mm}-${dd}T00:00:00Z`);
+
+        if (
+          d.getUTCDate() !== Number(dd) ||
+          d.getUTCMonth() + 1 !== Number(mm) ||
+          d.getUTCFullYear() !== Number(yyyy)
+        ) d = null;
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(String(v))) {
+        d = new Date(`${v}T00:00:00Z`);
+
+        if (
+          isNaN(d.getTime()) ||
+          d.toISOString().slice(0, 10) !== v
+        ) d = null;
+      }
+
+      if (!d || isNaN(d.getTime())) {
+        throw new Error(`Рядок ${line}: неправильна дата в колонці ${col}`);
+      }
+
+      return d.toISOString().slice(0, 10);
+    }
+
+    const rows = [];
+
+    sheet.eachRow((r, i) => {
+      if (i === 1) return;
+
+      const vals = NEW_RENT_HEADERS.map((_, col) => text(r, col + 1));
+
+      if (vals.every(v => v === null)) return;
+
+      if (!vals[1] || !vals[3] || !vals[4] || !vals[5] || !vals[6]) {
+        throw new Error(
+          `Рядок ${i}: обов'язкові №, Об’єкт, Область, Адреса, Орендодавець`
+        );
+      }
+
+      const payment = {};
+
+      [
+        ['Орендна плата (джерело)', 24],
+        ['Ф1 / б/н', 25],
+        ['Ф2 / нал. ТТ', 26],
+        ['Ф2 / нал. каса', 27],
+        ['Строк/дата оплати', 28],
+        ['Комунальні послуги', 29],
+        ['Ввідна потужність, кВт', 30],
+        ['Гарантійний платіж', 31],
+        ['Інші умови оплат', 32]
+      ].forEach(([key, idx]) => {
+        if (vals[idx] !== null) payment[key] = vals[idx];
+      });
+
+      const contacts = {};
+
+      if (vals[21]) {
+        contacts['Контакт орендодавця (реєстр)'] = vals[21];
+      }
+
+      if (vals[22]) {
+        contacts['Телефон'] = vals[22];
+      }
+
+      const critical = {};
+
+      if (vals[23]) critical['Примітка'] = vals[23];
+      if (vals[33]) critical['Інше'] = vals[33];
+
+      rows.push({
+        line: i,
+        tt_code: vals[0],
+        contract_number: vals[1],
+        contract_type: vals[2],
+        object_name: vals[3],
+        region: vals[4],
+        address: vals[5],
+        landlord: vals[6],
+        tenant: vals[7],
+        signed_date: date(vals[8], i, 9),
+        start_date: date(vals[9], i, 10),
+        opening_date: date(vals[10], i, 11),
+        end_date: date(vals[11], i, 12),
+        contract_status: vals[12],
+        renewal_terms: vals[13],
+        area_sqm: amount(vals[14], i, 15),
+        rent_f1: amount(vals[15], i, 16),
+        rent_f2: amount(vals[16], i, 17),
+        property_rights: vals[17],
+        folder_url: vals[18],
+        verification_status: vals[19],
+        notes: vals[20],
+        payment_terms: JSON.stringify(payment),
+        contacts: JSON.stringify(contacts),
+        critical_terms: JSON.stringify(critical)
+      });
+    });
+
+    if (!rows.length || rows.length > 500) {
+      return res.status(400).json({
+        ok: false,
+        error: 'У файлі має бути від 1 до 500 нових договорів'
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query('BEGIN');
+
+      await client.query('SELECT pg_advisory_xact_lock(731091, 2026)');
+
+      const existing = await client.query(
+        'SELECT contract_number, landlord, address FROM rent_contracts'
+      );
+
+      const norm = v => String(v || '')
+        .trim()
+        .toLocaleLowerCase('uk')
+        .replace(/\s+/g, ' ');
+
+      const fingerprint = o => [
+        o.contract_number,
+        o.landlord,
+        o.address
+      ].map(norm).join('|');
+
+      const seen = new Set(existing.rows.map(fingerprint));
+
+      for (const row of rows) {
+        const key = fingerprint(row);
+
+        if (seen.has(key)) {
+          await client.query('ROLLBACK');
+
+          return res.status(409).json({
+            ok: false,
+            error: `Дубль договору в рядку ${row.line}: № ${row.contract_number}. Нічого не імпортовано.`
+          });
+        }
+
+        seen.add(key);
+      }
+
+      const last = await client.query(
+        "SELECT COALESCE(MAX(SUBSTRING(id FROM '^CTR-([0-9]+)$')::integer), 0) AS n FROM rent_contracts"
+      );
+
+      let n = Number(last.rows[0].n);
+      const ids = [];
+
+      const fields = [
+        'id',
+        'tt_code',
+        'contract_number',
+        'contract_type',
+        'object_name',
+        'region',
+        'address',
+        'landlord',
+        'tenant',
+        'signed_date',
+        'start_date',
+        'opening_date',
+        'end_date',
+        'contract_status',
+        'renewal_terms',
+        'area_sqm',
+        'rent_f1',
+        'rent_f2',
+        'property_rights',
+        'folder_url',
+        'verification_status',
+        'notes',
+        'payment_terms',
+        'contacts',
+        'critical_terms'
+      ];
+
+      const sql = `
+        INSERT INTO rent_contracts (${fields.join(',')})
+        VALUES (${fields.map((_, i) => `$${i + 1}`).join(',')})
+      `;
+
+      for (const row of rows) {
+        const id = `CTR-${String(++n).padStart(4, '0')}`;
+
+        await client.query(
+          sql,
+          fields.map(f => f === 'id' ? id : row[f])
+        );
+
+        ids.push(id);
+      }
+
+      await client.query('COMMIT');
+
+      return res.json({
+        ok: true,
+        imported: ids.length,
+        ids
+      });
+
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+
+  } catch (error) {
+    if (/^Рядок |^Невірн|^Не збіга/.test(error.message)) {
+      return res.status(400).json({
+        ok: false,
+        error: error.message
+      });
+    }
+
+    next(error);
+  }
+});
+
 app.get("/api/contracts/:id/history", async (req, res, next) => {
   try {
     if (!pool) {
