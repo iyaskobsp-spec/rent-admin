@@ -97,9 +97,12 @@ app.get("/api/contracts", async (req, res, next) => {
       });
     }
 
+    const archiveScope = req.query.scope === "archive";
+
     const result = await pool.query(`
       SELECT *
       FROM rent_contracts
+      WHERE archived_at IS ${archiveScope ? "NOT NULL" : "NULL"}
       ORDER BY id ASC
     `);
 
@@ -1057,6 +1060,175 @@ app.post('/api/contracts/import-new-excel', excelUpload.single('file'), async (r
   }
 });
 
+
+function checkRentActionToken(req, res) {
+  const crypto = require("node:crypto");
+  const expected = process.env.RENT_IMPORT_TOKEN || "";
+  const provided = req.get("x-import-token") || "";
+
+  const a = Buffer.from(expected);
+  const b = Buffer.from(provided);
+
+  if (
+    !expected ||
+    a.length !== b.length ||
+    !crypto.timingSafeEqual(a, b)
+  ) {
+    res.status(403).json({
+      ok: false,
+      error: "Невірний ключ редагування"
+    });
+    return false;
+  }
+
+  return true;
+}
+
+app.post("/api/contracts/:id/archive", async (req, res, next) => {
+  if (!checkRentActionToken(req, res)) return;
+
+  if (!pool) {
+    return res.status(503).json({
+      ok: false,
+      error: "База недоступна"
+    });
+  }
+
+  if (!/^CTR-\d{4}$/.test(req.params.id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний ID договору"
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE rent_contracts
+       SET archived_at = NOW(), updated_at = NOW()
+       WHERE id = $1 AND archived_at IS NULL
+       RETURNING id`,
+      [req.params.id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({
+        ok: false,
+        error: "Договір не знайдено в основному реєстрі"
+      });
+    }
+
+    res.json({ ok: true, id: req.params.id });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/contracts/:id/restore", async (req, res, next) => {
+  if (!checkRentActionToken(req, res)) return;
+
+  if (!pool) {
+    return res.status(503).json({
+      ok: false,
+      error: "База недоступна"
+    });
+  }
+
+  if (!/^CTR-\d{4}$/.test(req.params.id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний ID договору"
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE rent_contracts
+       SET archived_at = NULL, updated_at = NOW()
+       WHERE id = $1 AND archived_at IS NOT NULL
+       RETURNING id`,
+      [req.params.id]
+    );
+
+    if (!result.rowCount) {
+      return res.status(404).json({
+        ok: false,
+        error: "Договір не знайдено в архіві"
+      });
+    }
+
+    res.json({ ok: true, id: req.params.id });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.delete("/api/contracts/:id/permanent", async (req, res, next) => {
+  if (!checkRentActionToken(req, res)) return;
+
+  if (!pool) {
+    return res.status(503).json({
+      ok: false,
+      error: "База недоступна"
+    });
+  }
+
+  if (!/^CTR-\d{4}$/.test(req.params.id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний ID договору"
+    });
+  }
+
+  if (req.body?.confirmId !== req.params.id) {
+    return res.status(400).json({
+      ok: false,
+      error: "Підтвердьте точний ID договору"
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const found = await client.query(
+      "SELECT id FROM rent_contracts WHERE id = $1 FOR UPDATE",
+      [req.params.id]
+    );
+
+    if (!found.rowCount) {
+      await client.query("ROLLBACK");
+
+      return res.status(404).json({
+        ok: false,
+        error: "Договір не знайдено"
+      });
+    }
+
+    await client.query(
+      "DELETE FROM rent_contract_history WHERE contract_id = $1",
+      [req.params.id]
+    );
+
+    await client.query(
+      "DELETE FROM rent_contracts WHERE id = $1",
+      [req.params.id]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      ok: true,
+      id: req.params.id
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 app.get("/api/contracts/:id/history", async (req, res, next) => {
   try {
     if (!pool) {
@@ -1471,7 +1643,8 @@ async function initializeDatabase() {
       ALTER TABLE rent_contracts
         ADD COLUMN IF NOT EXISTS rent_f1 NUMERIC(14,2),
         ADD COLUMN IF NOT EXISTS rent_f2 NUMERIC(14,2),
-        ADD COLUMN IF NOT EXISTS region TEXT;
+        ADD COLUMN IF NOT EXISTS region TEXT,
+        ADD COLUMN IF NOT EXISTS archived_at TIMESTAMPTZ;
     `);
 
     console.log("DATABASE RENT FIELDS: ready");
