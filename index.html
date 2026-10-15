@@ -1267,15 +1267,7 @@
       }
 
       if (action === "delete") {
-        const confirmedId = prompt(
-          `ОСТАТОЧНЕ ВИДАЛЕННЯ договору ${id} разом з історією.\nДля підтвердження введіть ID договору:`,
-          ""
-        );
-
-        if (confirmedId === null) return;
-
-        if (confirmedId.trim() !== id) {
-          message.textContent = "ID не збігається. Видалення скасовано.";
+        if (!confirm(`Видалити договір ${id} назавжди? Цю дію неможливо скасувати.`)) {
           return;
         }
       } else {
