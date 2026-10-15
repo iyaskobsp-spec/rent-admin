@@ -876,6 +876,7 @@
         id: c.id,
         tt: c.tt_code || "—",
         address: c.address || "—",
+        objectName: c.object_name || "",
         region: c.region || "",
         area: areaAmount === null || !Number.isFinite(areaAmount)
           ? "—" : moneyFormat.format(areaAmount),
