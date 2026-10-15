@@ -7,7 +7,74 @@
   <link rel="stylesheet" href="rent-admin.css">
 </head>
 <body>
-  <main class="page">
+  <section id="rentAuthScreen" class="rent-auth-screen">
+    <div class="rent-auth-card">
+      <div class="rent-auth-icon">🔐</div>
+      <h1>Управління орендою</h1>
+      <p>Вхід для співробітників</p>
+
+      <form id="rentLoginForm" class="rent-auth-form">
+        <label for="rentLoginEmail">Email</label>
+        <input id="rentLoginEmail"
+               type="email"
+               placeholder="Робочий email"
+               autocomplete="username"
+               required>
+
+        <label for="rentLoginPassword">Пароль</label>
+        <input id="rentLoginPassword"
+               type="password"
+               placeholder="Пароль"
+               autocomplete="current-password"
+               required>
+
+        <button type="submit" id="rentLoginBtn">
+          Увійти
+        </button>
+      </form>
+
+      <form id="rentPasswordForm" class="rent-auth-form" hidden>
+        <p class="rent-auth-notice">
+          Для першого входу встановіть власний пароль.
+        </p>
+
+        <label for="rentCurrentPassword">Тимчасовий пароль</label>
+        <input id="rentCurrentPassword"
+               type="password"
+               autocomplete="current-password"
+               required>
+
+        <label for="rentNewPassword">Новий пароль</label>
+        <input id="rentNewPassword"
+               type="password"
+               autocomplete="new-password"
+               minlength="4"
+               required>
+
+        <label for="rentRepeatPassword">Повторіть новий пароль</label>
+        <input id="rentRepeatPassword"
+               type="password"
+               autocomplete="new-password"
+               minlength="4"
+               required>
+
+        <button type="submit" id="rentChangePasswordBtn">
+          Зберегти новий пароль
+        </button>
+      </form>
+
+      <div id="rentAuthMessage"
+           class="rent-auth-message"
+           role="status"
+           aria-live="polite"></div>
+    </div>
+  </section>
+
+  <main class="page" hidden>
+    <div class="rent-account-bar">
+      <span id="rentAccountName"></span>
+      <button id="rentLogoutBtn" type="button">Вийти</button>
+    </div>
     <section id="moduleHome" class="module-home">
       <h1>Управління орендою</h1>
       <p class="subtitle">Реєстр договорів, бюджет та планування платежів</p>
@@ -1415,9 +1482,206 @@
       document.querySelector("#moduleHome").hidden = false;
     });
 
+
     search.addEventListener("input", render);
     statusFilter.addEventListener("change", render);
     render();
+
+    // Авторизація співробітників
+    const RENT_API = "https://rent-admin-production.up.railway.app";
+    const rentAuthScreen = document.querySelector("#rentAuthScreen");
+    const rentMainPage = document.querySelector("main.page");
+    const rentLoginForm = document.querySelector("#rentLoginForm");
+    const rentPasswordForm = document.querySelector("#rentPasswordForm");
+    const rentAuthMessage = document.querySelector("#rentAuthMessage");
+
+    let rentSessionToken = sessionStorage.getItem("rentSessionToken") || "";
+    let rentCurrentUser = null;
+
+    function rentShowLogin(message = "") {
+      rentAuthScreen.hidden = false;
+      rentMainPage.hidden = true;
+      rentLoginForm.hidden = false;
+      rentPasswordForm.hidden = true;
+      rentAuthMessage.textContent = message;
+      rentCurrentUser = null;
+    }
+
+    function rentShowPasswordChange() {
+      rentAuthScreen.hidden = false;
+      rentMainPage.hidden = true;
+      rentLoginForm.hidden = true;
+      rentPasswordForm.hidden = false;
+      rentPasswordForm.reset();
+      rentAuthMessage.textContent = "";
+    }
+
+    function rentShowApplication(user) {
+      rentCurrentUser = user;
+      rentAuthScreen.hidden = true;
+      rentMainPage.hidden = false;
+
+      document.querySelector("#rentAccountName").textContent =
+        `${user.name} · ${
+          user.role === "admin" ? "Адміністратор" :
+          user.role === "editor" ? "Редактор" : "Перегляд"
+        }`;
+    }
+
+    function rentHandleUser(user) {
+      rentCurrentUser = user;
+
+      if (user.mustChangePassword) {
+        rentShowPasswordChange();
+      } else {
+        rentShowApplication(user);
+      }
+    }
+
+    async function rentAuthRequest(path, options = {}) {
+      const headers = {
+        "Content-Type": "application/json",
+        ...(options.headers || {})
+      };
+
+      if (rentSessionToken) {
+        headers.Authorization = `Bearer ${rentSessionToken}`;
+      }
+
+      const response = await fetch(`${RENT_API}${path}`, {
+        ...options,
+        headers
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.error || "Помилка авторизації");
+      }
+
+      return data;
+    }
+
+    rentLoginForm.addEventListener("submit", async event => {
+      event.preventDefault();
+
+      const button = document.querySelector("#rentLoginBtn");
+      const email = document.querySelector("#rentLoginEmail").value.trim();
+      const password = document.querySelector("#rentLoginPassword").value;
+
+      button.disabled = true;
+      rentAuthMessage.textContent = "Перевіряємо дані...";
+
+      try {
+        const data = await rentAuthRequest("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({ email, password })
+        });
+
+        rentSessionToken = data.token;
+        sessionStorage.setItem("rentSessionToken", rentSessionToken);
+
+        rentLoginForm.reset();
+        rentHandleUser(data.user);
+      } catch (error) {
+        rentAuthMessage.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    rentPasswordForm.addEventListener("submit", async event => {
+      event.preventDefault();
+
+      const currentPassword =
+        document.querySelector("#rentCurrentPassword").value;
+
+      const newPassword =
+        document.querySelector("#rentNewPassword").value;
+
+      const repeatPassword =
+        document.querySelector("#rentRepeatPassword").value;
+
+      if (newPassword !== repeatPassword) {
+        rentAuthMessage.textContent = "Нові паролі не збігаються.";
+        return;
+      }
+
+      const button = document.querySelector("#rentChangePasswordBtn");
+      button.disabled = true;
+      rentAuthMessage.textContent = "Змінюємо пароль...";
+
+      try {
+        await rentAuthRequest("/api/auth/change-password", {
+          method: "POST",
+          body: JSON.stringify({
+            currentPassword,
+            newPassword
+          })
+        });
+
+        rentSessionToken = "";
+        sessionStorage.removeItem("rentSessionToken");
+        rentShowLogin(
+          "Пароль змінено. Увійдіть із новим паролем."
+        );
+      } catch (error) {
+        rentAuthMessage.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
+    document.querySelector("#rentLogoutBtn").addEventListener(
+      "click",
+      async () => {
+        const oldToken = rentSessionToken;
+
+        rentSessionToken = "";
+        sessionStorage.removeItem("rentSessionToken");
+
+        rentShowLogin();
+
+        document.querySelector("#registryModule").hidden = true;
+        document.querySelector("#moduleHome").hidden = false;
+        contractsLoaded = false;
+        registryRows = [];
+        contractsRaw.clear();
+        render();
+
+        if (oldToken) {
+          try {
+            await fetch(`${RENT_API}/api/auth/logout`, {
+              method: "POST",
+              headers: {
+                Authorization: `Bearer ${oldToken}`
+              }
+            });
+          } catch (error) {
+            console.warn("Не вдалося завершити серверну сесію.");
+          }
+        }
+      }
+    );
+
+    async function rentRestoreSession() {
+      if (!rentSessionToken) {
+        rentShowLogin();
+        return;
+      }
+
+      try {
+        const data = await rentAuthRequest("/api/auth/me");
+        rentHandleUser(data.user);
+      } catch (error) {
+        rentSessionToken = "";
+        sessionStorage.removeItem("rentSessionToken");
+        rentShowLogin("Увійдіть у систему.");
+      }
+    }
+
+    rentRestoreSession();
+
   </script>
 </body>
 </html>
