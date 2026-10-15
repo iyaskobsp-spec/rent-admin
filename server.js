@@ -1591,6 +1591,87 @@ async function autofillContractRegions() {
   }
 }
 
+
+async function initializeRentAuth() {
+  const crypto = require("node:crypto");
+  const { promisify } = require("node:util");
+  const scrypt = promisify(crypto.scrypt);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rent_users (
+      id BIGSERIAL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'viewer'
+        CHECK (role IN ('admin', 'editor', 'viewer')),
+      is_active BOOLEAN NOT NULL DEFAULT TRUE,
+      must_change_password BOOLEAN NOT NULL DEFAULT TRUE,
+      session_version INTEGER NOT NULL DEFAULT 1,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rent_user_sessions (
+      id UUID PRIMARY KEY,
+      user_id BIGINT NOT NULL
+        REFERENCES rent_users(id) ON DELETE CASCADE,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TIMESTAMPTZ NOT NULL,
+      session_version INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS idx_rent_sessions_user
+    ON rent_user_sessions(user_id)
+  `);
+
+  const existing = await pool.query(
+    "SELECT COUNT(*)::integer AS total FROM rent_users"
+  );
+
+  if (existing.rows[0].total > 0) {
+    console.log("AUTH: таблиці користувачів готові");
+    return;
+  }
+
+  const email = String(process.env.RENT_ADMIN_EMAIL || "")
+    .trim()
+    .toLowerCase();
+
+  const password = String(
+    process.env.RENT_ADMIN_TEMP_PASSWORD || ""
+  );
+
+  if (!email || password.length < 12) {
+    console.warn(
+      "AUTH: для першого адміністратора потрібно " +
+      "RENT_ADMIN_EMAIL і RENT_ADMIN_TEMP_PASSWORD " +
+      "(мінімум 12 символів)"
+    );
+    return;
+  }
+
+  const salt = crypto.randomBytes(16).toString("hex");
+  const hash = (await scrypt(password, salt, 64)).toString("hex");
+  const passwordHash = `scrypt:${salt}:${hash}`;
+
+  await pool.query(
+    `INSERT INTO rent_users (
+      name, email, password_hash, role,
+      is_active, must_change_password
+    )
+    VALUES ($1, $2, $3, 'admin', TRUE, TRUE)
+    ON CONFLICT (email) DO NOTHING`,
+    ["Адміністратор", email, passwordHash]
+  );
+
+  console.log("AUTH: перший адміністратор створений");
+}
+
 async function initializeDatabase() {
   if (!pool) {
     console.error("DATABASE_URL відсутня");
@@ -1715,6 +1796,8 @@ async function initializeDatabase() {
     await autofillContractRegions();    
 
     console.log("DATABASE TABLES: rent_contracts ready");
+
+    await initializeRentAuth();    
   } catch (error) {
     console.error("DATABASE INIT ERROR:", error.message);
   }
