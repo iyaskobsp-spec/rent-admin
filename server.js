@@ -1646,11 +1646,11 @@ async function initializeRentAuth() {
     process.env.RENT_ADMIN_TEMP_PASSWORD || ""
   );
 
-  if (!email || password.length < 12) {
+  if (!email || password.length < 4) {
     console.warn(
       "AUTH: для першого адміністратора потрібно " +
       "RENT_ADMIN_EMAIL і RENT_ADMIN_TEMP_PASSWORD " +
-      "(мінімум 12 символів)"
+      "(мінімум 4 символи)"
     );
     return;
   }
