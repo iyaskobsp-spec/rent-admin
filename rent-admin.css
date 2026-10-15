@@ -1124,3 +1124,14 @@ button.module-card:hover {
     width: 100%;
   }
 }
+
+/* Кнопки дій відповідно до ролей */
+
+#importPanel[hidden],
+#contractEditBtn[hidden],
+#contractArchiveBtn[hidden],
+#contractDeleteBtn[hidden],
+#contractSaveBtn[hidden],
+#contractCancelEditBtn[hidden] {
+  display: none !important;
+}
