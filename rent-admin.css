@@ -1158,3 +1158,460 @@ button.module-card:hover {
   opacity: 0.6;
   cursor: wait;
 }
+
+
+/* ========================================
+   БЮДЖЕТ ОРЕНДИ
+   ======================================== */
+
+#budgetModule[hidden],
+#budgetContent[hidden],
+#budgetCreateBtn[hidden],
+#budgetSaveBtn[hidden],
+#budgetApproveBtn[hidden],
+#budgetReopenBtn[hidden] {
+  display: none !important;
+}
+
+.budget-toolbar {
+  display: flex;
+  align-items: end;
+  flex-wrap: wrap;
+  gap: 15px;
+  margin-bottom: 14px;
+  padding: 17px;
+  border: 1px solid #dce5f0;
+  border-radius: 13px;
+  background: #fff;
+}
+
+.budget-month-field {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  color: #607087;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+#budgetMonth {
+  width: 180px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #233247;
+}
+
+.budget-status {
+  display: inline-block;
+  padding: 9px 14px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.budget-not-created {
+  background: #edf1f6;
+  color: #5d6c80;
+}
+
+.budget-draft {
+  background: #fff2d6;
+  color: #94620a;
+}
+
+.budget-approved {
+  background: #e5f5eb;
+  color: #146842;
+}
+
+.budget-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 9px;
+  margin-left: auto;
+}
+
+.budget-toolbar-actions button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid #233b5a;
+  border-radius: 9px;
+  background: #fff;
+  color: #233b5a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+#budgetCreateBtn,
+#budgetSaveBtn,
+#budgetApproveBtn {
+  background: #233b5a;
+  color: #fff;
+}
+
+#budgetApproveBtn {
+  background: #19714e;
+  border-color: #19714e;
+}
+
+.budget-toolbar-actions button:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.budget-toolbar-actions button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.budget-message {
+  min-height: 22px;
+  margin: 0 0 13px;
+  color: #607087;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.budget-message.is-error {
+  color: #a12f3c;
+}
+
+.budget-filters {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 15px;
+}
+
+.budget-filters input[type="search"],
+.budget-filters select {
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  background: #fff;
+  color: #233247;
+  font-size: 12px;
+}
+
+#budgetSearch {
+  width: min(330px, 100%);
+}
+
+#budgetRegionFilter {
+  width: 200px;
+}
+
+.budget-check-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #526b87;
+  font-size: 12px;
+}
+
+#budgetCount {
+  margin-left: auto;
+  color: #68788b;
+  font-size: 12px;
+}
+
+.budget-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 17px;
+}
+
+.budget-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 17px;
+  border: 1px solid #dce5f0;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.budget-summary span {
+  color: #68788b;
+  font-size: 12px;
+}
+
+.budget-summary strong {
+  color: #203956;
+  font-size: 19px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-table-wrap {
+  width: 100%;
+  max-height: calc(100vh - 340px);
+  min-height: 330px;
+  overflow: auto;
+  border: 1px solid #dce5f0;
+  border-radius: 12px;
+  background: #fff;
+  scrollbar-width: thin;
+}
+
+#budgetTable {
+  width: max-content;
+  min-width: 100%;
+  border-spacing: 0;
+  border-collapse: separate;
+  font-size: 12px;
+}
+
+#budgetTable th,
+#budgetTable td {
+  min-width: 115px;
+  padding: 9px 10px;
+  border-right: 1px solid #e8edf3;
+  border-bottom: 1px solid #e8edf3;
+  vertical-align: middle;
+  line-height: 1.4;
+}
+
+#budgetTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #eaf0f7;
+  color: #30425b;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+}
+
+#budgetTable thead tr:first-child th {
+  height: 42px;
+}
+
+#budgetTable thead tr:nth-child(2) th {
+  top: 42px;
+  height: 36px;
+  background: #f3f7fb;
+}
+
+#budgetTable tbody td {
+  background: #fff;
+}
+
+#budgetTable tbody tr:nth-child(even) td {
+  background: #fbfcfe;
+}
+
+#budgetTable tbody tr:hover td {
+  background: #f1f6fd;
+}
+
+#budgetTable .budget-tt {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+  min-width: 70px;
+  width: 70px;
+  background: #fff;
+  font-weight: 700;
+}
+
+#budgetTable .budget-id {
+  position: sticky;
+  left: 70px;
+  z-index: 2;
+  min-width: 105px;
+  width: 105px;
+  background: #fff;
+  white-space: nowrap;
+}
+
+#budgetTable .budget-address {
+  position: sticky;
+  left: 175px;
+  z-index: 2;
+  min-width: 260px;
+  width: 260px;
+  max-width: 260px;
+  background: #fff;
+  box-shadow: 7px 0 12px -10px #7b8b9e;
+  overflow-wrap: anywhere;
+}
+
+#budgetTable thead .budget-tt,
+#budgetTable thead .budget-id,
+#budgetTable thead .budget-address {
+  z-index: 5;
+  background: #eaf0f7;
+}
+
+#budgetTable .budget-due {
+  min-width: 160px;
+  max-width: 220px;
+  overflow-wrap: anywhere;
+  color: #566d87;
+}
+
+#budgetTable .budget-amount {
+  min-width: 125px;
+}
+
+#budgetTable .budget-money {
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#budgetTable .budget-input-cell {
+  min-width: 115px;
+  padding: 6px;
+}
+
+.budget-money-input {
+  width: 103px;
+  height: 34px;
+  padding: 0 7px;
+  border: 1px solid #d9e1eb;
+  border-radius: 6px;
+  background: #fff;
+  color: #233247;
+  font-size: 12px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.budget-money-input:focus {
+  outline: none;
+  border-color: #5889ca;
+  box-shadow: 0 0 0 2px rgba(78, 122, 185, .12);
+}
+
+.budget-money-input:disabled {
+  border-color: transparent;
+  background: transparent;
+  color: #233247;
+  opacity: 1;
+}
+
+.budget-money-input.budget-invalid {
+  border-color: #bc3749;
+  background: #fff0f1;
+}
+
+#budgetTable .budget-amount-changed,
+#budgetTable tbody tr:hover .budget-amount-changed {
+  background: #fff0bd !important;
+  color: #805500;
+  font-weight: 700;
+  cursor: help;
+}
+
+#budgetTable .budget-needs-review td:not(.budget-amount-changed) {
+  border-bottom-color: #eed9a5;
+}
+
+#budgetTable .budget-line-total {
+  background: #f0f6fd;
+  font-weight: 700;
+}
+
+#budgetTable .budget-week-group {
+  background: #dce8f6;
+}
+
+#budgetTable .budget-week-cell {
+  min-width: 115px;
+}
+
+#budgetTable .budget-comment {
+  min-width: 260px;
+  max-width: 300px;
+}
+
+.budget-comment textarea {
+  width: 100%;
+  min-height: 46px;
+  padding: 8px;
+  border: 1px solid #d9e1eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #233247;
+  font-size: 12px;
+  resize: vertical;
+}
+
+.budget-comment textarea:disabled {
+  border-color: transparent;
+  background: transparent;
+  opacity: 1;
+}
+
+.budget-issue-label {
+  display: block;
+  margin-top: 6px;
+  color: #986009;
+  font-size: 11px;
+}
+
+#budgetTable tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: #dce8f6;
+  color: #203956;
+  font-weight: 700;
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+#budgetTable tfoot td:first-child {
+  text-align: left;
+}
+
+.budget-table-note {
+  margin: 12px 0;
+  color: #718096;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+@media (max-width: 950px) {
+  .budget-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .budget-toolbar-actions {
+    margin-left: 0;
+  }
+}
+
+@media (max-width: 600px) {
+  .budget-summary {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .budget-summary strong {
+    font-size: 15px;
+  }
+
+  .budget-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .budget-month-field,
+  #budgetMonth,
+  #budgetSearch,
+  #budgetRegionFilter {
+    width: 100%;
+  }
+
+  .budget-table-wrap {
+    max-height: calc(100vh - 280px);
+  }
+}
