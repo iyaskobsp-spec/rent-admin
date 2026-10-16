@@ -213,6 +213,9 @@
           <button id="budgetReopenBtn" type="button" hidden>
             Повернути в чернетку
           </button>
+          <button id="budgetExportBtn" type="button" hidden>
+            Експорт Excel ↓
+          </button>          
         </div>
       </div>
 
@@ -1897,6 +1900,11 @@
       document.querySelector("#budgetApproveBtn").disabled =
         budgetLoading || budgetDirty.size > 0;
 
+      const exportBtn = document.querySelector("#budgetExportBtn");
+
+      exportBtn.hidden = !exists;
+      exportBtn.disabled = budgetLoading || budgetDirty.size > 0;
+
       document.querySelector("#budgetContent").hidden = !exists;
     }
 
@@ -2748,10 +2756,64 @@
       }
     );
     
+    document.querySelector("#budgetExportBtn").addEventListener(
+      "click",
+      async () => {
+        if (!budgetData?.exists || budgetDirty.size || budgetLoading) {
+          return;
+        }
+
+        const button = document.querySelector("#budgetExportBtn");
+        const month = budgetMonthInput.value;
+
+        button.disabled = true;
+        button.textContent = "Формуємо Excel...";
+        budgetSetMessage("Готуємо файл бюджету...");
+
+        try {
+          const response = await fetch(
+            `${budgetApiBase}/api/budget/${encodeURIComponent(month)}/export-excel`,
+            {
+              headers: {
+                Authorization: `Bearer ${rentSessionToken}`
+              }
+            }
+          );
+
+          if (!response.ok) {
+            const data = await response.json().catch(() => ({}));
+            throw new Error(
+              data.error || "Не вдалося експортувати бюджет"
+            );
+          }
+
+          const blob = await response.blob();
+          const url = URL.createObjectURL(blob);
+
+          const link = document.createElement("a");
+          link.href = url;
+          link.download = `Бюджет_оренди_${month}.xlsx`;
+
+          document.body.append(link);
+          link.click();
+          link.remove();
+
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+          budgetSetMessage("Excel-файл бюджету сформовано.");
+        } catch (error) {
+          budgetSetMessage(error.message, true);
+        } finally {
+          button.textContent = "Експорт Excel ↓";
+          budgetSyncControls();
+        }
+      }
+    );
+
     document.querySelector("#budgetCreateBtn").addEventListener(
       "click", budgetCreate
     );
-
+    
     document.querySelector("#budgetSaveBtn").addEventListener(
       "click", budgetSave
     );
