@@ -1742,3 +1742,26 @@ button.module-card:hover {
   color: #1d5b8f;
   font-weight: 700;
 }
+
+/* Повторне рознесення нерозпізнаних платежів */
+
+#budgetReallocateBtn[hidden] {
+  display: none !important;
+}
+
+#budgetReallocateBtn {
+  background: #fff;
+  border-color: #c6d6e8;
+  color: #285782;
+}
+
+#budgetReallocateBtn:hover:not(:disabled) {
+  background: #edf4fc;
+  border-color: #8eb2da;
+}
+
+#budgetReallocateBtn:disabled {
+  background: #f2f5f8;
+  color: #9aa7b6;
+  border-color: #e1e7ef;
+}
