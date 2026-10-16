@@ -3056,6 +3056,363 @@ app.post("/api/budget/:month/reallocate", async (req, res, next) => {
   }
 });
 
+
+app.get("/api/budget/:month/export-excel", async (req, res, next) => {
+  try {
+    const month = req.params.month;
+
+    if (!rentBudgetValidMonth(month)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний місяць бюджету"
+      });
+    }
+
+    const budgetResult = await pool.query(
+      `SELECT id, status
+       FROM rent_budgets
+       WHERE budget_month = $1`,
+      [month]
+    );
+
+    if (!budgetResult.rowCount) {
+      return res.status(404).json({
+        ok: false,
+        error: "Бюджет не знайдено"
+      });
+    }
+
+    const budget = budgetResult.rows[0];
+    const weeks = rentBudgetWeeks(month);
+
+    const linesResult = await pool.query(
+      `SELECT *
+       FROM rent_budget_lines
+       WHERE budget_id = $1
+       ORDER BY tt_code NULLS LAST, contract_id`,
+      [budget.id]
+    );
+
+    const book = new ExcelJS.Workbook();
+    book.creator = "Управління орендою";
+
+    const sheet = book.addWorksheet("Бюджет оренди", {
+      views: [{
+        state: "frozen",
+        xSplit: 3,
+        ySplit: 5
+      }]
+    });
+
+    const columns = [
+      { header: "ТТ", width: 11 },
+      { header: "ID", width: 17 },
+      { header: "Область / адреса", width: 48 },
+      { header: "Строк оплати", width: 29 },
+      { header: "Ф1 дог., грн", width: 18 },
+      { header: "Ф2 дог., грн", width: 18 },
+      { header: "Ф1 бюджет, грн", width: 19 },
+      { header: "Ф2 бюджет, грн", width: 19 },
+      { header: "Всього, грн", width: 19 }
+    ];
+
+    for (const week of weeks) {
+      columns.push(
+        { header: "Ф1", width: 18 },
+        { header: "Ф2", width: 18 }
+      );
+    }
+
+    columns.push({ header: "Коментар / перевірка", width: 45 });
+
+    sheet.columns = columns.map(column => ({
+      width: column.width
+    }));
+
+    const lastColumn = columns.length;
+    const commentColumn = lastColumn;
+
+    const letter = number => sheet.getColumn(number).letter;
+
+    sheet.mergeCells(1, 1, 1, lastColumn);
+    sheet.getCell("A1").value =
+      `БЮДЖЕТ ОРЕНДИ ЗА ${month.slice(5)}.${month.slice(0, 4)}`;
+
+    sheet.getRow(1).height = 37;
+    sheet.getCell("A1").font = {
+      bold: true,
+      size: 17,
+      color: { argb: "FFFFFFFF" }
+    };
+    sheet.getCell("A1").fill = {
+      type: "pattern",
+      pattern: "solid",
+      fgColor: { argb: "FF233B5A" }
+    };
+    sheet.getCell("A1").alignment = {
+      vertical: "middle",
+      horizontal: "center"
+    };
+
+    sheet.mergeCells(2, 1, 2, lastColumn);
+    sheet.getCell("A2").value =
+      `Статус: ${
+        budget.status === "approved" ? "Затверджений" : "Чернетка"
+      }  |  Договорів: ${linesResult.rowCount}`;
+
+    sheet.getCell("A2").font = {
+      bold: true,
+      size: 11,
+      color: { argb: "FF30425B" }
+    };
+    sheet.getRow(2).height = 28;
+
+    // Заголовки основних колонок.
+    for (let col = 1; col <= 9; col++) {
+      sheet.mergeCells(4, col, 5, col);
+      sheet.getCell(4, col).value = columns[col - 1].header;
+    }
+
+    // Кожен тиждень має дві підколонки: Ф1 і Ф2.
+    weeks.forEach((week, index) => {
+      const col = 10 + index * 2;
+
+      sheet.mergeCells(4, col, 4, col + 1);
+
+      sheet.getCell(4, col).value =
+        `Тиждень ${index + 1}: ${week.label}`;
+
+      sheet.getCell(5, col).value = "Ф1";
+      sheet.getCell(5, col + 1).value = "Ф2";
+    });
+
+    sheet.mergeCells(4, commentColumn, 5, commentColumn);
+    sheet.getCell(4, commentColumn).value =
+      "Коментар / перевірка";
+
+    sheet.getRow(4).height = 34;
+    sheet.getRow(5).height = 27;
+
+    const orange = "FFFFF2E4";
+    const green = "FFEAF6ED";
+    const orangeHeader = "FFF8E5D1";
+    const greenHeader = "FFDCEFE1";
+    const moneyFormat = '#,##0.00';
+
+    for (let row = 4; row <= 5; row++) {
+      for (let col = 1; col <= lastColumn; col++) {
+        const cell = sheet.getCell(row, col);
+
+        cell.font = {
+          bold: true,
+          color: { argb: "FF30425B" }
+        };
+
+        cell.alignment = {
+          horizontal: "center",
+          vertical: "middle",
+          wrapText: true
+        };
+
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: "FFEAF0F7" }
+        };
+
+        cell.border = {
+          bottom: {
+            style: "thin",
+            color: { argb: "FFDCE5EF" }
+          },
+          right: {
+            style: "thin",
+            color: { argb: "FFDCE5EF" }
+          }
+        };
+      }
+    }
+
+    weeks.forEach((week, index) => {
+      const color = index % 2 === 0
+        ? orangeHeader : greenHeader;
+
+      for (const row of [4, 5]) {
+        for (const col of [10 + index * 2, 11 + index * 2]) {
+          sheet.getCell(row, col).fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: color }
+          };
+        }
+      }
+    });
+
+    // Дані договорів.
+    for (const line of linesResult.rows) {
+      const f1 = Number(line.budget_f1 || 0);
+      const f2 = Number(line.budget_f2 || 0);
+
+      const values = [
+        line.tt_code || "",
+        line.contract_id,
+        [line.region, line.address].filter(Boolean).join(" · "),
+        line.payment_due_text || "",
+        Number(line.base_f1 || 0),
+        Number(line.base_f2 || 0),
+        f1,
+        f2,
+        f1 + f2
+      ];
+
+      weeks.forEach((week, index) => {
+        values.push(
+          Number(line.weeks_f1?.[index] || 0),
+          Number(line.weeks_f2?.[index] || 0)
+        );
+      });
+
+      values.push(line.budget_comment || "");
+
+      const row = sheet.addRow(values);
+      row.height = 34;
+
+      row.eachCell({ includeEmpty: true }, (cell, col) => {
+        cell.alignment = {
+          vertical: "middle",
+          wrapText: col === 3 || col === 4 ||
+            col === commentColumn
+        };
+
+        cell.border = {
+          bottom: {
+            style: "hair",
+            color: { argb: "FFE1E8F1" }
+          },
+          right: {
+            style: "hair",
+            color: { argb: "FFE1E8F1" }
+          }
+        };
+
+        cell.fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: {
+            argb: row.number % 2 === 0
+              ? "FFF7F9FC" : "FFFFFFFF"
+          }
+        };
+
+        if (col >= 5 && col < commentColumn) {
+          cell.numFmt = moneyFormat;
+        }
+      });
+
+      weeks.forEach((week, index) => {
+        const color = index % 2 === 0 ? orange : green;
+
+        for (const col of [10 + index * 2, 11 + index * 2]) {
+          row.getCell(col).fill = {
+            type: "pattern",
+            pattern: "solid",
+            fgColor: { argb: color }
+          };
+        }
+      });
+
+      if (line.needs_review) {
+        row.getCell(commentColumn).value =
+          [line.budget_comment, "Потребує перевірки"]
+            .filter(Boolean).join("\n");
+      }
+    }
+
+    // Підсумковий рядок.
+    const firstDataRow = 6;
+    const lastDataRow = sheet.lastRow.number;
+    const totalRow = sheet.addRow([]);
+
+    sheet.mergeCells(totalRow.number, 1, totalRow.number, 4);
+    totalRow.getCell(1).value = "РАЗОМ";
+    totalRow.height = 32;
+
+    for (let col = 5; col < commentColumn; col++) {
+      const colLetter = letter(col);
+
+      totalRow.getCell(col).value =
+        lastDataRow >= firstDataRow
+          ? {
+              formula:
+                `SUM(${colLetter}${firstDataRow}:` +
+                `${colLetter}${lastDataRow})`
+            }
+          : 0;
+
+      totalRow.getCell(col).numFmt = moneyFormat;
+    }
+
+    for (let col = 1; col <= lastColumn; col++) {
+      const cell = totalRow.getCell(col);
+
+      cell.font = {
+        bold: true,
+        color: { argb: "FF203956" }
+      };
+      cell.fill = {
+        type: "pattern",
+        pattern: "solid",
+        fgColor: { argb: "FFDCE8F6" }
+      };
+      cell.alignment = {
+        vertical: "middle",
+        horizontal: col <= 4 ? "left" : "right"
+      };
+    }
+
+    weeks.forEach((week, index) => {
+      const color = index % 2 === 0
+        ? orangeHeader : greenHeader;
+
+      for (const col of [10 + index * 2, 11 + index * 2]) {
+        totalRow.getCell(col).fill = {
+          type: "pattern",
+          pattern: "solid",
+          fgColor: { argb: color }
+        };
+      }
+    });
+
+    sheet.autoFilter = {
+      from: { row: 5, column: 1 },
+      to: {
+        row: Math.max(firstDataRow, lastDataRow),
+        column: lastColumn
+      }
+    };
+
+    book.calcProperties.fullCalcOnLoad = true;
+
+    const buffer = await book.xlsx.writeBuffer();
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="rent_budget_${month}.xlsx"`
+    );
+
+    res.setHeader("Cache-Control", "no-store");
+
+    return res.send(Buffer.from(buffer));
+  } catch (error) {
+    next(error);
+  }
+});
+
 app.post("/api/budget/:month/approve", async (req, res, next) => {
   const month = req.params.month;
 
