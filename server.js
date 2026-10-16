@@ -2425,6 +2425,647 @@ async function initializeRentAuth() {
   console.log("AUTH: перший адміністратор створений");
 }
 
+async function initializeRentBudget() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rent_budgets (
+      id BIGSERIAL PRIMARY KEY,
+      budget_month VARCHAR(7) NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'draft'
+        CHECK (status IN ('draft', 'approved')),
+      created_by BIGINT REFERENCES rent_users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      approved_by BIGINT REFERENCES rent_users(id) ON DELETE SET NULL,
+      approved_at TIMESTAMPTZ,
+      revision INTEGER NOT NULL DEFAULT 1
+    );
+
+    CREATE TABLE IF NOT EXISTS rent_budget_lines (
+      id BIGSERIAL PRIMARY KEY,
+      budget_id BIGINT NOT NULL
+        REFERENCES rent_budgets(id) ON DELETE CASCADE,
+      contract_id VARCHAR(30) NOT NULL,
+      tt_code TEXT,
+      object_name TEXT,
+      address TEXT,
+      region TEXT,
+      end_date DATE,
+      payment_due_text TEXT,
+      base_f1 NUMERIC(14,2) NOT NULL DEFAULT 0,
+      base_f2 NUMERIC(14,2) NOT NULL DEFAULT 0,
+      budget_f1 NUMERIC(14,2) NOT NULL DEFAULT 0,
+      budget_f2 NUMERIC(14,2) NOT NULL DEFAULT 0,
+      weeks_f1 JSONB NOT NULL DEFAULT '[]'::jsonb,
+      weeks_f2 JSONB NOT NULL DEFAULT '[]'::jsonb,
+      needs_review BOOLEAN NOT NULL DEFAULT FALSE,
+      budget_comment TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      UNIQUE(budget_id, contract_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_rent_budget_lines_month
+      ON rent_budget_lines(budget_id);
+  `);
+
+  await pool.query(`
+    ALTER TABLE rent_budgets
+      ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'draft',
+      ADD COLUMN IF NOT EXISTS approved_by BIGINT REFERENCES rent_users(id) ON DELETE SET NULL,
+      ADD COLUMN IF NOT EXISTS approved_at TIMESTAMPTZ,
+      ADD COLUMN IF NOT EXISTS revision INTEGER NOT NULL DEFAULT 1;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rent_budget_status_history (
+      id BIGSERIAL PRIMARY KEY,
+      budget_id BIGINT NOT NULL
+        REFERENCES rent_budgets(id) ON DELETE CASCADE,
+      from_status TEXT,
+      to_status TEXT NOT NULL,
+      changed_by BIGINT REFERENCES rent_users(id) ON DELETE SET NULL,
+      changed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+function rentBudgetWeeks(month) {
+  const [year, number] = month.split("-").map(Number);
+  const days = new Date(Date.UTC(year, number, 0)).getUTCDate();
+  const weeks = [];
+  let first = 1;
+
+  while (first <= days) {
+    const date = new Date(Date.UTC(year, number - 1, first));
+    const dayOfWeek = (date.getUTCDay() + 6) % 7;
+    const last = Math.min(days, first + 6 - dayOfWeek);
+
+    weeks.push({
+      from: first,
+      to: last,
+      label: `${String(first).padStart(2, "0")}–${String(last).padStart(2, "0")}`
+    });
+
+    first = last + 1;
+  }
+
+  return weeks;
+}
+
+function rentBudgetDefaultWeeks(dueText, amountF1, amountF2, weeks) {
+  const f1 = weeks.map(() => 0);
+  const f2 = weeks.map(() => 0);
+
+  const source = String(dueText || "").trim().toLowerCase();
+
+  const numbers = [...source.matchAll(/(?<!\d)(\d{1,2})(?!\d)/g)]
+    .map(match => Number(match[1]));
+
+  let weekIndex = -1;
+
+  // Однозначний день місяця, наприклад "до 20 числа".
+  if (numbers.length === 1 && numbers[0] >= 1 && numbers[0] <= 31) {
+    weekIndex = weeks.findIndex(
+      week => numbers[0] >= week.from && numbers[0] <= week.to
+    );
+  }
+
+  // Діапазон, наприклад "15-20". Автоматичний розподіл
+  // лише якщо обидві межі потрапляють в один тиждень.
+  if (numbers.length === 2 &&
+      /^(\d{1,2})\s*[-–]\s*(\d{1,2})$/.test(source)) {
+    const [from, to] = numbers;
+
+    if (from <= to) {
+      weekIndex = weeks.findIndex(
+        week => from >= week.from && to <= week.to
+      );
+    }
+  }
+
+  if (weekIndex >= 0) {
+    f1[weekIndex] = Number(amountF1);
+    f2[weekIndex] = Number(amountF2);
+  }
+
+  return {
+    f1,
+    f2,
+    needsReview: weekIndex < 0 &&
+      (Number(amountF1) !== 0 || Number(amountF2) !== 0)
+  };
+}
+
+function rentBudgetValidMonth(month) {
+  return /^\d{4}-(0[1-9]|1[0-2])$/.test(String(month || "")) &&
+    Number(String(month).slice(0, 4)) >= 2000;
+}
+
+app.use("/api/budget", rentRequireSession, (req, res, next) => {
+  if (req.rentUser.must_change_password) {
+    return res.status(403).json({
+      ok: false,
+      error: "Спочатку змініть тимчасовий пароль"
+    });
+  }
+
+  if (req.method !== "GET" &&
+      !["admin", "editor"].includes(req.rentUser.role)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Недостатньо прав для зміни бюджету"
+    });
+  }
+
+  next();
+});
+
+app.get("/api/budget/:month", async (req, res, next) => {
+  try {
+    const month = req.params.month;
+
+    if (!rentBudgetValidMonth(month)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний місяць"
+      });
+    }
+
+    const budget = await pool.query(
+      "SELECT * FROM rent_budgets WHERE budget_month = $1",
+      [month]
+    );
+
+    if (!budget.rowCount) {
+      return res.json({
+        ok: true,
+        exists: false,
+        weeks: rentBudgetWeeks(month),
+        lines: []
+      });
+    }
+
+    const lines = await pool.query(
+      `SELECT
+         l.*,
+         c.rent_f1 AS current_f1,
+         c.rent_f2 AS current_f2,
+         c.payment_terms AS current_payment_terms,
+         c.archived_at AS current_archived_at
+       FROM rent_budget_lines l
+       LEFT JOIN rent_contracts c ON c.id = l.contract_id
+       WHERE l.budget_id = $1
+       ORDER BY l.tt_code NULLS LAST, l.contract_id`,
+      [budget.rows[0].id]
+    );
+
+    res.json({
+      ok: true,
+      exists: true,
+      budget: budget.rows[0],
+      weeks: rentBudgetWeeks(month),
+      lines: lines.rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.post("/api/budget/:month/create", async (req, res, next) => {
+  const month = req.params.month;
+
+  if (!rentBudgetValidMonth(month)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний місяць"
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const created = await client.query(
+      `INSERT INTO rent_budgets (budget_month, created_by)
+       VALUES ($1, $2)
+       ON CONFLICT (budget_month) DO NOTHING
+       RETURNING id`,
+      [month, req.rentUser.id]
+    );
+
+    if (!created.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "Бюджет цього місяця вже створено"
+      });
+    }
+
+    const budgetId = created.rows[0].id;
+
+    await client.query(
+      `INSERT INTO rent_budget_status_history
+         (budget_id, from_status, to_status, changed_by)
+       VALUES ($1, NULL, 'draft', $2)`,
+      [budgetId, req.rentUser.id]
+    );
+
+    const weeks = rentBudgetWeeks(month);
+
+    const contracts = await client.query(`
+      SELECT
+        id, tt_code, object_name, address, region, end_date,
+        rent_f1, rent_f2, payment_terms
+      FROM rent_contracts
+      WHERE archived_at IS NULL
+      ORDER BY id
+    `);
+
+    for (const contract of contracts.rows) {
+      const f1 = Number(contract.rent_f1 || 0);
+      const f2 = Number(contract.rent_f2 || 0);
+
+      const dueText = String(
+        contract.payment_terms?.["Строк/дата оплати"] || ""
+      );
+
+      const allocation = rentBudgetDefaultWeeks(
+        dueText, f1, f2, weeks
+      );
+
+      await client.query(
+        `INSERT INTO rent_budget_lines (
+          budget_id, contract_id, tt_code, object_name,
+          address, region, end_date, payment_due_text,
+          base_f1, base_f2, budget_f1, budget_f2,
+          weeks_f1, weeks_f2, needs_review
+        ) VALUES (
+          $1, $2, $3, $4, $5, $6, $7, $8,
+          $9, $10, $11, $12, $13::jsonb, $14::jsonb, $15
+        )`,
+        [
+          budgetId,
+          contract.id,
+          contract.tt_code,
+          contract.object_name,
+          contract.address,
+          contract.region,
+          contract.end_date,
+          dueText,
+          f1, f2, f1, f2,
+          JSON.stringify(allocation.f1),
+          JSON.stringify(allocation.f2),
+          allocation.needsReview
+        ]
+      );
+    }
+
+    await client.query("COMMIT");
+
+    res.status(201).json({
+      ok: true,
+      created: contracts.rowCount
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.patch("/api/budget/lines/:id", async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+
+    if (!Number.isSafeInteger(id) || id < 1) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний рядок бюджету"
+      });
+    }
+
+    const existing = await pool.query(
+      `SELECT l.*, b.budget_month
+       FROM rent_budget_lines l
+       JOIN rent_budgets b ON b.id = l.budget_id
+       WHERE l.id = $1`,
+      [id]
+    );
+
+    if (!existing.rowCount) {
+      return res.status(404).json({
+        ok: false,
+        error: "Рядок бюджету не знайдено"
+      });
+    }
+
+    const line = existing.rows[0];
+    const weeks = rentBudgetWeeks(line.budget_month);
+
+    function amount(value) {
+      const number = Number(value);
+
+      return Number.isFinite(number) &&
+        number >= 0 &&
+        Math.round(number * 100) === number * 100
+        ? number : null;
+    }
+
+    const f1 = amount(req.body.budget_f1);
+    const f2 = amount(req.body.budget_f2);
+    const weeksF1 = req.body.weeks_f1;
+    const weeksF2 = req.body.weeks_f2;
+
+    if (
+      f1 === null || f2 === null ||
+      !Array.isArray(weeksF1) ||
+      !Array.isArray(weeksF2) ||
+      weeksF1.length !== weeks.length ||
+      weeksF2.length !== weeks.length ||
+      [...weeksF1, ...weeksF2].some(value => amount(value) === null)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Перевірте суми та розподіл за тижнями"
+      });
+    }
+
+    const comment = String(req.body.budget_comment || "").trim();
+
+    if (comment.length > 2000) {
+      return res.status(400).json({
+        ok: false,
+        error: "Коментар занадто довгий"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const budgetState = await client.query(
+        `SELECT status
+         FROM rent_budgets
+         WHERE id = $1
+         FOR UPDATE`,
+        [line.budget_id]
+      );
+
+      if (
+        !budgetState.rowCount ||
+        budgetState.rows[0].status !== "draft"
+      ) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Затверджений бюджет не можна редагувати"
+        });
+      }
+
+      await client.query(
+        `UPDATE rent_budget_lines
+         SET budget_f1 = $2,
+             budget_f2 = $3,
+             weeks_f1 = $4::jsonb,
+             weeks_f2 = $5::jsonb,
+             budget_comment = $6,
+             needs_review = FALSE,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [
+          id, f1, f2,
+          JSON.stringify(weeksF1.map(Number)),
+          JSON.stringify(weeksF2.map(Number)),
+          comment || null
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({ ok: true });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  } catch (error) {
+    next(error);
+  }
+});
+
+
+app.post("/api/budget/:month/approve", async (req, res, next) => {
+  const month = req.params.month;
+
+  if (!rentBudgetValidMonth(month)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний місяць"
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `SELECT *
+       FROM rent_budgets
+       WHERE budget_month = $1
+       FOR UPDATE`,
+      [month]
+    );
+
+    if (!result.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        ok: false,
+        error: "Бюджет не знайдено"
+      });
+    }
+
+    const budget = result.rows[0];
+
+    if (budget.status !== "draft") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "Бюджет уже затверджено"
+      });
+    }
+
+    const lines = await client.query(
+      `SELECT contract_id, budget_f1, budget_f2,
+              weeks_f1, weeks_f2, needs_review
+       FROM rent_budget_lines
+       WHERE budget_id = $1`,
+      [budget.id]
+    );
+
+    if (!lines.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        ok: false,
+        error: "Неможливо затвердити порожній бюджет"
+      });
+    }
+
+    const expectedWeeks = rentBudgetWeeks(month).length;
+
+    const invalid = lines.rows.filter(line => {
+      const f1 = Array.isArray(line.weeks_f1)
+        ? line.weeks_f1 : [];
+      const f2 = Array.isArray(line.weeks_f2)
+        ? line.weeks_f2 : [];
+
+      if (
+        line.needs_review ||
+        f1.length !== expectedWeeks ||
+        f2.length !== expectedWeeks
+      ) return true;
+
+      const sum = values => {
+        if (values.some(v => !Number.isFinite(Number(v)) ||
+            Number(v) < 0)) return NaN;
+
+        return Math.round(
+          values.reduce((total, v) =>
+            total + Math.round(Number(v) * 100), 0)
+        );
+      };
+
+      return (
+        sum(f1) !== Math.round(Number(line.budget_f1) * 100) ||
+        sum(f2) !== Math.round(Number(line.budget_f2) * 100)
+      );
+    });
+
+    if (invalid.length) {
+      await client.query("ROLLBACK");
+
+      return res.status(400).json({
+        ok: false,
+        error:
+          `Є ${invalid.length} договорів із нерознесеними ` +
+          `платежами або неперевіреними строками оплати.`,
+        contractIds: invalid.map(line => line.contract_id)
+      });
+    }
+
+    await client.query(
+      `UPDATE rent_budgets
+       SET status = 'approved',
+           approved_by = $2,
+           approved_at = NOW()
+       WHERE id = $1`,
+      [budget.id, req.rentUser.id]
+    );
+
+    await client.query(
+      `INSERT INTO rent_budget_status_history
+         (budget_id, from_status, to_status, changed_by)
+       VALUES ($1, 'draft', 'approved', $2)`,
+      [budget.id, req.rentUser.id]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      ok: true,
+      status: "approved"
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
+app.post("/api/budget/:month/reopen", async (req, res, next) => {
+  if (req.rentUser.role !== "admin") {
+    return res.status(403).json({
+      ok: false,
+      error: "Повернути бюджет у чернетку може лише адміністратор"
+    });
+  }
+
+  const month = req.params.month;
+
+  if (!rentBudgetValidMonth(month)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний місяць"
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const result = await client.query(
+      `SELECT *
+       FROM rent_budgets
+       WHERE budget_month = $1
+       FOR UPDATE`,
+      [month]
+    );
+
+    if (!result.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        ok: false,
+        error: "Бюджет не знайдено"
+      });
+    }
+
+    const budget = result.rows[0];
+
+    if (budget.status !== "approved") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "Бюджет уже перебуває в чернетці"
+      });
+    }
+
+    await client.query(
+      `UPDATE rent_budgets
+       SET status = 'draft',
+           approved_by = NULL,
+           approved_at = NULL,
+           revision = revision + 1
+       WHERE id = $1`,
+      [budget.id]
+    );
+
+    await client.query(
+      `INSERT INTO rent_budget_status_history
+         (budget_id, from_status, to_status, changed_by)
+       VALUES ($1, 'approved', 'draft', $2)`,
+      [budget.id, req.rentUser.id]
+    );
+
+    await client.query("COMMIT");
+
+    res.json({
+      ok: true,
+      status: "draft",
+      revision: Number(budget.revision) + 1
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 async function initializeDatabase() {
   if (!pool) {
     console.error("DATABASE_URL відсутня");
@@ -2550,7 +3191,8 @@ async function initializeDatabase() {
 
     console.log("DATABASE TABLES: rent_contracts ready");
 
-    await initializeRentAuth();    
+    await initializeRentAuth();
+    await initializeRentBudget();    
   } catch (error) {
     console.error("DATABASE INIT ERROR:", error.message);
   }
