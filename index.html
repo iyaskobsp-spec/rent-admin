@@ -1750,6 +1750,9 @@
     let budgetData = null;
     let budgetDirty = new Set();
     let budgetLoading = false;
+    let budgetSortWeek = null;
+    let budgetSortKind = null;
+    let budgetSortDirection = 0;
 
     const budgetMoney = new Intl.NumberFormat("uk-UA", {
       minimumFractionDigits: 2,
@@ -1926,6 +1929,58 @@
       return input;
     }
 
+
+    function budgetRedistributeWeeks(line, kind, newAmount) {
+      const key = `weeks_${kind}`;
+      const values = line[key].map(budgetNumber);
+      const newCents = Math.round(newAmount * 100);
+
+      const active = values
+        .map((amount, index) => ({
+          index,
+          cents: Math.round(amount * 100)
+        }))
+        .filter(item => item.cents > 0);
+
+      if (active.length === 0) {
+        // Немає визначеного тижня оплати:
+        // не ставимо суму в довільний тиждень.
+        return;
+      }
+
+      const oldTotal = active.reduce(
+        (sum, item) => sum + item.cents, 0
+      );
+
+      let remaining = newCents;
+
+      active.forEach((item, position) => {
+        const cents = position === active.length - 1
+          ? remaining
+          : Math.round(newCents * item.cents / oldTotal);
+
+        values[item.index] = cents / 100;
+        remaining -= cents;
+      });
+
+      line[key] = values;
+    }
+
+    function budgetSetAmount(line, kind, newAmount) {
+      const oldAmount = budgetNumber(line[`budget_${kind}`]);
+
+      if (budgetCents(oldAmount) === budgetCents(newAmount)) {
+        return;
+      }
+
+      line[`budget_${kind}`] = newAmount;
+      budgetRedistributeWeeks(line, kind, newAmount);
+
+      budgetMarkDirty(line);
+      budgetRenderBody();
+      budgetRenderTotals();
+    }
+    
     function budgetMarkDirty(line) {
       budgetDirty.add(String(line.id));
       budgetSyncControls();
@@ -1935,6 +1990,24 @@
       );
     }
 
+
+    function budgetToggleWeekSort(index, kind) {
+      if (budgetSortWeek !== index || budgetSortKind !== kind) {
+        budgetSortWeek = index;
+        budgetSortKind = kind;
+        budgetSortDirection = 1;
+      } else if (budgetSortDirection === 1) {
+        budgetSortDirection = -1;
+      } else {
+        budgetSortWeek = null;
+        budgetSortKind = null;
+        budgetSortDirection = 0;
+      }
+
+      budgetRenderHeader();
+      budgetRenderBody();
+    }
+    
     function budgetRenderHeader() {
       const thead = budgetTable.querySelector("thead");
       const top = document.createElement("tr");
@@ -1958,19 +2031,49 @@
         top.append(th);
       }
 
+
       budgetData.weeks.forEach((week, index) => {
+        const colorClass = index % 2 === 0
+          ? "budget-week-orange"
+          : "budget-week-green";
+
         const group = budgetMakeCell(
           "th",
           `Тиждень ${index + 1}: ${week.label}`,
-          "budget-week-group"
+          `budget-week-group ${colorClass}`
         );
+
         group.colSpan = 2;
         top.append(group);
 
-        bottom.append(
-          budgetMakeCell("th", "Ф1", "budget-week-cell"),
-          budgetMakeCell("th", "Ф2", "budget-week-cell")
-        );
+        for (const kind of ["f1", "f2"]) {
+          const th = document.createElement("th");
+          th.className = `budget-week-cell ${colorClass}`;
+
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = "budget-week-sort";
+
+          const active = budgetSortWeek === index &&
+            budgetSortKind === kind;
+
+          button.textContent =
+            `${kind.toUpperCase()} ${
+              active
+                ? budgetSortDirection === 1 ? "↑" : "↓"
+                : "↕"
+            }`;
+
+          button.classList.toggle("is-active", active);
+          button.title = `Сортувати ${kind.toUpperCase()} за ${week.label}`;
+
+          button.addEventListener("click", () => {
+            budgetToggleWeekSort(index, kind);
+          });
+
+          th.append(button);
+          bottom.append(th);
+        }
       });
 
       const comment = budgetMakeCell(
@@ -1991,7 +2094,7 @@
       const region = document.querySelector("#budgetRegionFilter").value;
       const issuesOnly = document.querySelector("#budgetOnlyIssues").checked;
 
-      return budgetData.lines.filter(line => {
+      const filtered = budgetData.lines.filter(line => {
         const matchesSearch = !query ||
           [
             line.contract_id, line.tt_code,
@@ -2003,10 +2106,31 @@
               .includes(query)
           );
 
+
         return matchesSearch &&
           (!region || line.region === region) &&
           (!issuesOnly || budgetLineIssue(line));
       });
+
+      if (budgetSortDirection && budgetSortWeek !== null) {
+        const key = `weeks_${budgetSortKind}`;
+        const index = budgetSortWeek;
+
+        filtered.sort((a, b) => {
+          const left = budgetCents(a[key]?.[index] ?? 0);
+          const right = budgetCents(b[key]?.[index] ?? 0);
+
+          const difference =
+            (left - right) * budgetSortDirection;
+
+          return difference ||
+            String(a.contract_id).localeCompare(
+              String(b.contract_id), "uk", { numeric: true }
+            );
+        });
+      }
+
+      return filtered;
     }
 
     function budgetRenderRegions() {
@@ -2088,9 +2212,7 @@
           td.append(budgetMakeMoneyInput(
             line[`budget_${kind}`],
             value => {
-              line[`budget_${kind}`] = value;
-              budgetMarkDirty(line);
-              budgetRenderBody();
+              budgetSetAmount(line, kind, value);
             }
           ));
 
@@ -2111,8 +2233,12 @@
         for (let i = 0; i < budgetData.weeks.length; i++) {
           for (const kind of ["f1", "f2"]) {
             const td = document.createElement("td");
-            td.className = "budget-input-cell budget-week-cell";
-
+            td.className =
+              "budget-input-cell budget-week-cell " +
+              (i % 2 === 0
+                ? "budget-week-orange"
+                : "budget-week-green");
+            
             td.append(budgetMakeMoneyInput(
               line[`weeks_${kind}`]?.[i] ?? 0,
               value => {
@@ -2228,7 +2354,10 @@
               budgetFormat(all.reduce(
                 (sum, line) =>
                   sum + budgetNumber(line[`weeks_${kind}`]?.[i]), 0
-              ))
+              )),
+              i % 2 === 0
+                ? "budget-week-orange"
+                : "budget-week-green"
             )
           );
         }
