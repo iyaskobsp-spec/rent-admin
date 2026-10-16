@@ -1765,3 +1765,20 @@ button.module-card:hover {
   color: #9aa7b6;
   border-color: #e1e7ef;
 }
+
+/* Експорт бюджету в Excel */
+
+#budgetExportBtn[hidden] {
+  display: none !important;
+}
+
+#budgetExportBtn {
+  background: #ffffff;
+  border-color: #a8bdd5;
+  color: #285782;
+}
+
+#budgetExportBtn:hover:not(:disabled) {
+  background: #edf4fc;
+  border-color: #789bc9;
+}
