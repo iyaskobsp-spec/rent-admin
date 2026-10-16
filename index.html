@@ -97,14 +97,15 @@
           </span>
           <span class="module-card-state available">Активний</span>
         </button>
-        <div class="module-card is-disabled" aria-disabled="true">
+        <button class="module-card" id="openBudgetBtn" type="button">
           <span class="module-card-icon">▥</span>
           <span class="module-card-content">
             <strong>Бюджет</strong>
-            <span>Планування витрат по місяцях з урахуванням підвищень</span>
-            <small>У розробці</small>
+            <span>Договірні платежі Ф1/Ф2 за тижнями місяця</span>
+            <small>Відкрити модуль →</small>
           </span>
-        </div>
+          <span class="module-card-state available">Активний</span>
+        </button>
         <div class="module-card is-disabled" aria-disabled="true">
           <span class="module-card-icon">▦</span>
           <span class="module-card-content">
@@ -172,6 +173,97 @@
 
           <div id="rentUsersList" class="rent-users-list"></div>
         </section>
+      </div>
+    </section>
+
+
+    <section id="budgetModule" hidden>
+      <button id="backFromBudgetBtn" class="back-to-modules" type="button">
+        ← До модулів
+      </button>
+
+      <h1>Бюджет оренди</h1>
+      <p class="subtitle">
+        План договірних платежів Ф1/Ф2 за календарними тижнями
+      </p>
+
+      <div class="budget-toolbar">
+        <label class="budget-month-field">
+          <span>Місяць бюджету</span>
+          <input id="budgetMonth" type="month">
+        </label>
+
+        <span id="budgetStatus" class="budget-status">
+          Не сформований
+        </span>
+
+        <div class="budget-toolbar-actions">
+          <button id="budgetCreateBtn" type="button" hidden>
+            Сформувати бюджет
+          </button>
+          <button id="budgetSaveBtn" type="button" hidden>
+            Зберегти зміни
+          </button>
+          <button id="budgetApproveBtn" type="button" hidden>
+            Затвердити бюджет
+          </button>
+          <button id="budgetReopenBtn" type="button" hidden>
+            Повернути в чернетку
+          </button>
+        </div>
+      </div>
+
+      <div id="budgetMessage" class="budget-message" role="status"></div>
+
+      <div id="budgetContent" hidden>
+        <div class="budget-filters">
+          <input id="budgetSearch" type="search"
+                 placeholder="Пошук за ТТ, ID, адресою">
+
+          <select id="budgetRegionFilter">
+            <option value="">Усі області</option>
+          </select>
+
+          <label class="budget-check-label">
+            <input id="budgetOnlyIssues" type="checkbox">
+            Тільки ті, що потребують уваги
+          </label>
+
+          <span id="budgetCount"></span>
+        </div>
+
+        <div class="budget-summary">
+          <div>
+            <span>Бюджет Ф1</span>
+            <strong id="budgetTotalF1">0,00</strong>
+          </div>
+          <div>
+            <span>Бюджет Ф2</span>
+            <strong id="budgetTotalF2">0,00</strong>
+          </div>
+          <div>
+            <span>Загальний бюджет</span>
+            <strong id="budgetTotalAll">0,00</strong>
+          </div>
+          <div>
+            <span>Потребують перевірки</span>
+            <strong id="budgetIssuesCount">0</strong>
+          </div>
+        </div>
+
+        <div class="budget-table-wrap">
+          <table id="budgetTable">
+            <thead></thead>
+            <tbody></tbody>
+            <tfoot></tfoot>
+          </table>
+        </div>
+
+        <p class="budget-table-note">
+          Підсвічені договірні суми означають, що після формування
+          бюджету вони змінилися в реєстрі. Бюджет автоматично
+          не перераховується.
+        </p>
       </div>
     </section>
     
@@ -1642,6 +1734,756 @@
     statusFilter.addEventListener("change", render);
     render();
 
+
+    // ============================================
+    // БЮДЖЕТ ОРЕНДИ
+    // ============================================
+
+    const budgetModule = document.querySelector("#budgetModule");
+    const budgetMonthInput = document.querySelector("#budgetMonth");
+    const budgetMessage = document.querySelector("#budgetMessage");
+    const budgetTable = document.querySelector("#budgetTable");
+
+    const budgetApiBase =
+      "https://rent-admin-production.up.railway.app";
+
+    let budgetData = null;
+    let budgetDirty = new Set();
+    let budgetLoading = false;
+
+    const budgetMoney = new Intl.NumberFormat("uk-UA", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
+    function budgetFormat(value) {
+      return budgetMoney.format(Number(value || 0));
+    }
+
+    function budgetNumber(value) {
+      const number = Number(String(value).replace(",", "."));
+      return Number.isFinite(number) ? number : 0;
+    }
+
+    function budgetCents(value) {
+      return Math.round(budgetNumber(value) * 100);
+    }
+
+    function budgetSum(values) {
+      return (values || []).reduce(
+        (total, value) => total + budgetNumber(value),
+        0
+      );
+    }
+
+    function budgetEditable() {
+      return budgetData?.exists &&
+        budgetData.budget?.status === "draft" &&
+        ["admin", "editor"].includes(rentCurrentUser?.role);
+    }
+
+    function budgetChanged(line, kind) {
+      const current = line[`current_${kind}`];
+      const original = line[`base_${kind}`];
+
+      return current !== null &&
+        current !== undefined &&
+        budgetCents(current) !== budgetCents(original);
+    }
+
+    function budgetLineIssue(line) {
+      const f1 = budgetSum(line.weeks_f1);
+      const f2 = budgetSum(line.weeks_f2);
+
+      return Boolean(line.needs_review) ||
+        budgetChanged(line, "f1") ||
+        budgetChanged(line, "f2") ||
+        budgetCents(f1) !== budgetCents(line.budget_f1) ||
+        budgetCents(f2) !== budgetCents(line.budget_f2);
+    }
+
+    function budgetLineMismatch(line) {
+      return (
+        budgetCents(budgetSum(line.weeks_f1)) !==
+          budgetCents(line.budget_f1) ||
+        budgetCents(budgetSum(line.weeks_f2)) !==
+          budgetCents(line.budget_f2)
+      );
+    }
+
+    function budgetUserMonth() {
+      const date = new Date();
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      return `${year}-${month}`;
+    }
+
+    budgetMonthInput.value = budgetUserMonth();
+
+    function budgetSetMessage(text, error = false) {
+      budgetMessage.textContent = text;
+      budgetMessage.classList.toggle("is-error", error);
+    }
+
+    async function budgetRequest(path, options = {}) {
+      const response = await fetch(budgetApiBase + path, {
+        ...options,
+        headers: {
+          ...(options.body ? { "Content-Type": "application/json" } : {}),
+          Authorization: `Bearer ${rentSessionToken}`,
+          ...(options.headers || {})
+        }
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok) {
+        const details = Array.isArray(data.contractIds)
+          ? ` Договори: ${data.contractIds.slice(0, 15).join(", ")}`
+          : "";
+
+        throw new Error((data.error || "Помилка бюджету") + details);
+      }
+
+      return data;
+    }
+
+    function budgetSyncControls() {
+      const exists = Boolean(budgetData?.exists);
+      const approved = budgetData?.budget?.status === "approved";
+      const canWrite = ["admin", "editor"]
+        .includes(rentCurrentUser?.role);
+      const canAdmin = rentCurrentUser?.role === "admin";
+
+      document.querySelector("#budgetStatus").textContent =
+        !exists ? "Не сформований" :
+        approved ? "Затверджений" : "Чернетка";
+
+      document.querySelector("#budgetStatus").className =
+        "budget-status " +
+        (!exists ? "budget-not-created" :
+         approved ? "budget-approved" : "budget-draft");
+
+      document.querySelector("#budgetCreateBtn").hidden =
+        exists || !canWrite;
+
+      document.querySelector("#budgetSaveBtn").hidden =
+        !exists || approved || !canWrite;
+
+      document.querySelector("#budgetApproveBtn").hidden =
+        !exists || approved || !canWrite;
+
+      document.querySelector("#budgetReopenBtn").hidden =
+        !exists || !approved || !canAdmin;
+
+      document.querySelector("#budgetSaveBtn").disabled =
+        budgetLoading || budgetDirty.size === 0;
+
+      document.querySelector("#budgetApproveBtn").disabled =
+        budgetLoading || budgetDirty.size > 0;
+
+      document.querySelector("#budgetContent").hidden = !exists;
+    }
+
+    function budgetMakeCell(tag, text, className = "") {
+      const element = document.createElement(tag);
+      element.textContent = text;
+      if (className) element.className = className;
+      return element;
+    }
+
+    function budgetMakeMoneyInput(value, onChange) {
+      const input = document.createElement("input");
+      input.type = "number";
+      input.min = "0";
+      input.step = "0.01";
+      input.value = String(budgetNumber(value));
+      input.className = "budget-money-input";
+      input.disabled = !budgetEditable();
+
+      input.addEventListener("change", () => {
+        const raw = input.value.trim();
+        const value = Number(raw);
+
+        if (
+          !raw ||
+          !Number.isFinite(value) ||
+          value < 0 ||
+          Math.abs(value * 100 - Math.round(value * 100)) > 0.000001
+        ) {
+          input.classList.add("budget-invalid");
+          budgetSetMessage(
+            "Введіть коректну невід'ємну суму з двома знаками після коми.",
+            true
+          );
+          return;
+        }
+
+        input.classList.remove("budget-invalid");
+        onChange(value);
+      });
+
+      return input;
+    }
+
+    function budgetMarkDirty(line) {
+      budgetDirty.add(String(line.id));
+      budgetSyncControls();
+      budgetRenderTotals();
+      budgetSetMessage(
+        `Є незбережені зміни: ${budgetDirty.size} рядків.`
+      );
+    }
+
+    function budgetRenderHeader() {
+      const thead = budgetTable.querySelector("thead");
+      const top = document.createElement("tr");
+      const bottom = document.createElement("tr");
+
+      const fixedColumns = [
+        ["ТТ", "budget-tt"],
+        ["ID", "budget-id"],
+        ["Область / адреса", "budget-address"],
+        ["Строк оплати", "budget-due"],
+        ["Ф1 дог., грн", "budget-amount"],
+        ["Ф2 дог., грн", "budget-amount"],
+        ["Ф1 бюджет, грн", "budget-amount"],
+        ["Ф2 бюджет, грн", "budget-amount"],
+        ["Всього, грн", "budget-amount"]
+      ];
+
+      for (const [label, className] of fixedColumns) {
+        const th = budgetMakeCell("th", label, className);
+        th.rowSpan = 2;
+        top.append(th);
+      }
+
+      budgetData.weeks.forEach((week, index) => {
+        const group = budgetMakeCell(
+          "th",
+          `Тиждень ${index + 1}: ${week.label}`,
+          "budget-week-group"
+        );
+        group.colSpan = 2;
+        top.append(group);
+
+        bottom.append(
+          budgetMakeCell("th", "Ф1", "budget-week-cell"),
+          budgetMakeCell("th", "Ф2", "budget-week-cell")
+        );
+      });
+
+      const comment = budgetMakeCell(
+        "th", "Коментар / перевірка", "budget-comment"
+      );
+      comment.rowSpan = 2;
+      top.append(comment);
+
+      thead.replaceChildren(top, bottom);
+    }
+
+    function budgetFilteredLines() {
+      if (!budgetData?.exists) return [];
+
+      const query = document.querySelector("#budgetSearch")
+        .value.trim().toLocaleLowerCase("uk");
+
+      const region = document.querySelector("#budgetRegionFilter").value;
+      const issuesOnly = document.querySelector("#budgetOnlyIssues").checked;
+
+      return budgetData.lines.filter(line => {
+        const matchesSearch = !query ||
+          [
+            line.contract_id, line.tt_code,
+            line.object_name, line.address,
+            line.region
+          ].some(value =>
+            String(value || "")
+              .toLocaleLowerCase("uk")
+              .includes(query)
+          );
+
+        return matchesSearch &&
+          (!region || line.region === region) &&
+          (!issuesOnly || budgetLineIssue(line));
+      });
+    }
+
+    function budgetRenderRegions() {
+      const select = document.querySelector("#budgetRegionFilter");
+      const previous = select.value;
+
+      const regions = [...new Set(
+        (budgetData?.lines || [])
+          .map(line => line.region)
+          .filter(Boolean)
+      )].sort((a, b) => a.localeCompare(b, "uk"));
+
+      select.replaceChildren(new Option("Усі області", ""));
+
+      for (const region of regions) {
+        select.append(new Option(region, region));
+      }
+
+      select.value = regions.includes(previous) ? previous : "";
+    }
+
+    function budgetRenderBody() {
+      const body = budgetTable.querySelector("tbody");
+      const fragment = document.createDocumentFragment();
+      const lines = budgetFilteredLines();
+
+      for (const line of lines) {
+        const tr = document.createElement("tr");
+        const changedF1 = budgetChanged(line, "f1");
+        const changedF2 = budgetChanged(line, "f2");
+
+        if (line.needs_review || budgetLineMismatch(line)) {
+          tr.classList.add("budget-needs-review");
+        }
+
+        tr.append(
+          budgetMakeCell("td", line.tt_code || "—", "budget-tt"),
+          budgetMakeCell("td", line.contract_id, "budget-id"),
+          budgetMakeCell(
+            "td",
+            [line.region, line.address].filter(Boolean).join(" · "),
+            "budget-address"
+          ),
+          budgetMakeCell(
+            "td",
+            line.payment_due_text || "Не визначено",
+            "budget-due"
+          )
+        );
+
+        for (const kind of ["f1", "f2"]) {
+          const td = budgetMakeCell(
+            "td",
+            budgetFormat(line[`base_${kind}`]),
+            "budget-money budget-contract-sum"
+          );
+
+          if (budgetChanged(line, kind)) {
+            td.classList.add("budget-amount-changed");
+            td.title =
+              "Була зміна суми в реєстрі.\n" +
+              `На момент створення бюджету: ${
+                budgetFormat(line[`base_${kind}`])
+              } грн\n` +
+              `Зараз у реєстрі: ${
+                budgetFormat(line[`current_${kind}`])
+              } грн\n` +
+              "Бюджет автоматично не змінено.";
+            td.append(" ⚠");
+          }
+
+          tr.append(td);
+        }
+
+        for (const kind of ["f1", "f2"]) {
+          const td = document.createElement("td");
+          td.className = "budget-input-cell";
+
+          td.append(budgetMakeMoneyInput(
+            line[`budget_${kind}`],
+            value => {
+              line[`budget_${kind}`] = value;
+              budgetMarkDirty(line);
+              budgetRenderBody();
+            }
+          ));
+
+          tr.append(td);
+        }
+
+        tr.append(
+          budgetMakeCell(
+            "td",
+            budgetFormat(
+              budgetNumber(line.budget_f1) +
+              budgetNumber(line.budget_f2)
+            ),
+            "budget-money budget-line-total"
+          )
+        );
+
+        for (let i = 0; i < budgetData.weeks.length; i++) {
+          for (const kind of ["f1", "f2"]) {
+            const td = document.createElement("td");
+            td.className = "budget-input-cell budget-week-cell";
+
+            td.append(budgetMakeMoneyInput(
+              line[`weeks_${kind}`]?.[i] ?? 0,
+              value => {
+                line[`weeks_${kind}`][i] = value;
+                budgetMarkDirty(line);
+                budgetRenderBody();
+              }
+            ));
+
+            tr.append(td);
+          }
+        }
+
+        const commentCell = document.createElement("td");
+        commentCell.className = "budget-comment";
+
+        const textarea = document.createElement("textarea");
+        textarea.value = line.budget_comment || "";
+        textarea.placeholder = "Коментар...";
+        textarea.maxLength = 2000;
+        textarea.disabled = !budgetEditable();
+
+        textarea.addEventListener("change", () => {
+          line.budget_comment = textarea.value;
+          budgetMarkDirty(line);
+        });
+
+        commentCell.append(textarea);
+
+        if (line.needs_review) {
+          commentCell.append(
+            budgetMakeCell(
+              "small",
+              "⚠ Перевірити договірний строк оплати",
+              "budget-issue-label"
+            )
+          );
+        }
+
+        if (budgetLineMismatch(line)) {
+          commentCell.append(
+            budgetMakeCell(
+              "small",
+              "⚠ Тижневі суми не дорівнюють бюджету",
+              "budget-issue-label"
+            )
+          );
+        }
+
+        tr.append(commentCell);
+        fragment.append(tr);
+      }
+
+      body.replaceChildren(fragment);
+
+      document.querySelector("#budgetCount").textContent =
+        `Показано ${lines.length} із ${budgetData.lines.length}`;
+    }
+
+    function budgetRenderTotals() {
+      if (!budgetData?.exists) return;
+
+      const all = budgetData.lines;
+      const totalF1 = all.reduce(
+        (sum, line) => sum + budgetNumber(line.budget_f1), 0
+      );
+      const totalF2 = all.reduce(
+        (sum, line) => sum + budgetNumber(line.budget_f2), 0
+      );
+
+      document.querySelector("#budgetTotalF1").textContent =
+        budgetFormat(totalF1) + " грн";
+
+      document.querySelector("#budgetTotalF2").textContent =
+        budgetFormat(totalF2) + " грн";
+
+      document.querySelector("#budgetTotalAll").textContent =
+        budgetFormat(totalF1 + totalF2) + " грн";
+
+      document.querySelector("#budgetIssuesCount").textContent =
+        String(all.filter(budgetLineIssue).length);
+
+      const footer = budgetTable.querySelector("tfoot");
+      const tr = document.createElement("tr");
+
+      const label = budgetMakeCell("td", "РАЗОМ");
+      label.colSpan = 4;
+      tr.append(label);
+
+      tr.append(
+        budgetMakeCell(
+          "td",
+          budgetFormat(all.reduce(
+            (s, l) => s + budgetNumber(l.base_f1), 0
+          ))
+        ),
+        budgetMakeCell(
+          "td",
+          budgetFormat(all.reduce(
+            (s, l) => s + budgetNumber(l.base_f2), 0
+          ))
+        ),
+        budgetMakeCell("td", budgetFormat(totalF1)),
+        budgetMakeCell("td", budgetFormat(totalF2)),
+        budgetMakeCell("td", budgetFormat(totalF1 + totalF2))
+      );
+
+      for (let i = 0; i < budgetData.weeks.length; i++) {
+        for (const kind of ["f1", "f2"]) {
+          tr.append(
+            budgetMakeCell(
+              "td",
+              budgetFormat(all.reduce(
+                (sum, line) =>
+                  sum + budgetNumber(line[`weeks_${kind}`]?.[i]), 0
+              ))
+            )
+          );
+        }
+      }
+
+      tr.append(budgetMakeCell("td", ""));
+      footer.replaceChildren(tr);
+    }
+
+    function budgetRender() {
+      budgetSyncControls();
+
+      if (!budgetData?.exists) return;
+
+      budgetRenderRegions();
+      budgetRenderHeader();
+      budgetRenderBody();
+      budgetRenderTotals();
+    }
+
+    async function budgetLoad(month = budgetMonthInput.value) {
+      if (!month) return;
+
+      budgetLoading = true;
+      budgetSetMessage("Завантажуємо бюджет...");
+
+      try {
+        const data = await budgetRequest(
+          `/api/budget/${encodeURIComponent(month)}`
+        );
+
+        budgetData = data;
+        budgetDirty.clear();
+        budgetRender();
+
+        budgetSetMessage(
+          data.exists
+            ? data.budget.status === "approved"
+              ? "Бюджет затверджено. Редагування заблоковано."
+              : "Чернетка бюджету. Можна вносити зміни."
+            : "Бюджет цього місяця ще не сформовано."
+        );
+      } catch (error) {
+        budgetData = null;
+        budgetSetMessage(error.message, true);
+      } finally {
+        budgetLoading = false;
+        budgetSyncControls();
+      }
+    }
+
+    async function budgetCreate() {
+      if (budgetDirty.size) return;
+
+      const month = budgetMonthInput.value;
+
+      if (!month || !["admin", "editor"].includes(rentCurrentUser?.role)) {
+        return;
+      }
+
+      if (!confirm(`Сформувати бюджет за ${month}?`)) return;
+
+      budgetLoading = true;
+      budgetSyncControls();
+      budgetSetMessage("Формуємо бюджет із реєстру договорів...");
+
+      try {
+        const result = await budgetRequest(
+          `/api/budget/${encodeURIComponent(month)}/create`,
+          { method: "POST" }
+        );
+
+        await budgetLoad(month);
+        budgetSetMessage(
+          `Бюджет сформовано. Договорів: ${result.created}.`
+        );
+      } catch (error) {
+        budgetSetMessage(error.message, true);
+      } finally {
+        budgetLoading = false;
+        budgetSyncControls();
+      }
+    }
+
+    async function budgetSave() {
+      if (!budgetEditable() || !budgetDirty.size) return false;
+
+      if (document.querySelector(".budget-invalid")) {
+        budgetSetMessage("Виправте некоректні суми.", true);
+        return false;
+      }
+
+      const ids = [...budgetDirty];
+      const lines = budgetData.lines.filter(
+        line => ids.includes(String(line.id))
+      );
+
+      budgetLoading = true;
+      budgetSyncControls();
+      budgetSetMessage(`Зберігаємо ${lines.length} рядків...`);
+
+      let saved = 0;
+      const errors = [];
+
+      for (const line of lines) {
+        try {
+          await budgetRequest(`/api/budget/lines/${line.id}`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              budget_f1: budgetNumber(line.budget_f1),
+              budget_f2: budgetNumber(line.budget_f2),
+              weeks_f1: line.weeks_f1.map(budgetNumber),
+              weeks_f2: line.weeks_f2.map(budgetNumber),
+              budget_comment: line.budget_comment || ""
+            })
+          });
+
+          budgetDirty.delete(String(line.id));
+          line.needs_review = false;
+          saved++;
+        } catch (error) {
+          errors.push(`${line.contract_id}: ${error.message}`);
+        }
+      }
+
+      budgetLoading = false;
+      budgetRender();
+
+      if (errors.length) {
+        budgetSetMessage(
+          `Збережено ${saved}. Помилки: ${errors.join("; ")}`,
+          true
+        );
+        return false;
+      }
+
+      budgetSetMessage(`Збережено ${saved} змінених рядків.`);
+      return true;
+    }
+
+    async function budgetChangeStatus(action) {
+      if (!budgetData?.exists) return;
+
+      if (budgetDirty.size) {
+        budgetSetMessage(
+          "Спочатку збережіть зміни в бюджеті.",
+          true
+        );
+        return;
+      }
+
+      const month = budgetMonthInput.value;
+      const approve = action === "approve";
+
+      if (!confirm(
+        approve
+          ? `Затвердити бюджет за ${month}? Після цього редагування буде заблоковано.`
+          : `Повернути бюджет за ${month} у чернетку?`
+      )) return;
+
+      budgetLoading = true;
+      budgetSyncControls();
+
+      try {
+        await budgetRequest(
+          `/api/budget/${encodeURIComponent(month)}/${action}`,
+          { method: "POST" }
+        );
+
+        await budgetLoad(month);
+        budgetSetMessage(
+          approve
+            ? "Бюджет затверджено."
+            : "Бюджет повернуто в чернетку."
+        );
+      } catch (error) {
+        budgetSetMessage(error.message, true);
+      } finally {
+        budgetLoading = false;
+        budgetSyncControls();
+      }
+    }
+
+    document.querySelector("#openBudgetBtn").addEventListener(
+      "click",
+      async () => {
+        document.querySelector("#moduleHome").hidden = true;
+        document.querySelector("#registryModule").hidden = true;
+        document.querySelector("#usersModule").hidden = true;
+        budgetModule.hidden = false;
+
+        budgetMonthInput.value ||= budgetUserMonth();
+        await budgetLoad();
+      }
+    );
+
+    document.querySelector("#backFromBudgetBtn").addEventListener(
+      "click",
+      () => {
+        if (budgetDirty.size &&
+            !confirm("Є незбережені зміни. Вийти без збереження?")) {
+          return;
+        }
+
+        budgetDirty.clear();
+        budgetModule.hidden = true;
+        document.querySelector("#moduleHome").hidden = false;
+      }
+    );
+
+    budgetMonthInput.addEventListener("change", async event => {
+      const next = event.target.value;
+
+      if (budgetDirty.size &&
+          !confirm("Є незбережені зміни. Змінити місяць?")) {
+        event.target.value = budgetData?.budget?.budget_month ||
+          budgetUserMonth();
+        return;
+      }
+
+      budgetDirty.clear();
+      await budgetLoad(next);
+    });
+
+    document.querySelector("#budgetCreateBtn").addEventListener(
+      "click", budgetCreate
+    );
+
+    document.querySelector("#budgetSaveBtn").addEventListener(
+      "click", budgetSave
+    );
+
+    document.querySelector("#budgetApproveBtn").addEventListener(
+      "click", () => budgetChangeStatus("approve")
+    );
+
+    document.querySelector("#budgetReopenBtn").addEventListener(
+      "click", () => budgetChangeStatus("reopen")
+    );
+
+    for (const id of [
+      "#budgetSearch", "#budgetRegionFilter", "#budgetOnlyIssues"
+    ]) {
+      const element = document.querySelector(id);
+      element.addEventListener(
+        element.tagName === "INPUT" &&
+          element.type === "search" ? "input" : "change",
+        () => {
+          if (budgetData?.exists) budgetRenderBody();
+        }
+      );
+    }
+
+    budgetSyncControls();
+    
     // Авторизація співробітників
     const RENT_API = "https://rent-admin-production.up.railway.app";
     const rentAuthScreen = document.querySelector("#rentAuthScreen");
