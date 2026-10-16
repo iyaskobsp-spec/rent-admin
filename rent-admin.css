@@ -1702,3 +1702,43 @@ button.module-card:hover {
   opacity: 1;
   box-shadow: none;
 }
+
+
+/* Згортання договірних і бюджетних сум */
+
+#budgetTable .budget-amount-group {
+  min-width: 195px;
+  padding: 0;
+  background: #eaf0f7;
+}
+
+#budgetTable .budget-group-toggle {
+  width: 100%;
+  min-height: 42px;
+  padding: 8px 12px;
+  border: 0;
+  background: transparent;
+  color: #30425b;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#budgetTable .budget-group-toggle:hover {
+  background: #dbe7f4;
+}
+
+#budgetTable .budget-amount-summary {
+  min-width: 195px;
+  text-align: right;
+  white-space: nowrap;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+#budgetTable .budget-summary-value {
+  margin-top: 4px;
+  color: #1d5b8f;
+  font-weight: 700;
+}
