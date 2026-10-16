@@ -1615,3 +1615,90 @@ button.module-card:hover {
     max-height: calc(100vh - 280px);
   }
 }
+
+
+/* ========================================
+   БЮДЖЕТ: КОЛЬОРИ ТИЖНІВ І СОРТУВАННЯ
+   ======================================== */
+
+/* Непарні тижні: м'який помаранчевий */
+#budgetTable thead th.budget-week-orange {
+  background: #f8e5d1;
+}
+
+#budgetTable tbody td.budget-week-orange,
+#budgetTable tbody tr:nth-child(even) td.budget-week-orange,
+#budgetTable tbody tr:hover td.budget-week-orange {
+  background: #fff2e4;
+}
+
+#budgetTable tfoot td.budget-week-orange {
+  background: #f5dfc6;
+}
+
+/* Парні тижні: м'який зелений */
+#budgetTable thead th.budget-week-green {
+  background: #dcefe1;
+}
+
+#budgetTable tbody td.budget-week-green,
+#budgetTable tbody tr:nth-child(even) td.budget-week-green,
+#budgetTable tbody tr:hover td.budget-week-green {
+  background: #eaf6ed;
+}
+
+#budgetTable tfoot td.budget-week-green {
+  background: #d3e9d8;
+}
+
+/* Поля введення зберігають колір свого тижня */
+#budgetTable td.budget-week-orange .budget-money-input {
+  background: #fffaf4;
+}
+
+#budgetTable td.budget-week-green .budget-money-input {
+  background: #f5fcf6;
+}
+
+#budgetTable .budget-money-input:disabled {
+  background: transparent;
+}
+
+/* Кнопки сортування Ф1/Ф2 */
+#budgetTable .budget-week-sort {
+  padding: 5px 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: #34506c;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+#budgetTable .budget-week-sort:hover {
+  background: rgba(255, 255, 255, .6);
+}
+
+#budgetTable .budget-week-sort.is-active {
+  background: #fff;
+  border-color: #b8c9d9;
+  color: #155da8;
+}
+
+/* Зберегти зміни: зелена тільки коли є зміни */
+#budgetSaveBtn:not(:disabled) {
+  background: #19714e;
+  border-color: #19714e;
+  color: #fff;
+  opacity: 1;
+  box-shadow: 0 2px 8px rgba(25, 113, 78, .16);
+}
+
+#budgetSaveBtn:disabled {
+  background: #e9eef4;
+  border-color: #d9e1eb;
+  color: #8d9aab;
+  opacity: 1;
+  box-shadow: none;
+}
