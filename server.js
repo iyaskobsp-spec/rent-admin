@@ -2510,47 +2510,113 @@ function rentBudgetWeeks(month) {
   return weeks;
 }
 
-function rentBudgetDefaultWeeks(dueText, amountF1, amountF2, weeks) {
+
+function rentBudgetDefaultWeeks(
+  dueText, amountF1, amountF2, weeks, month
+) {
   const f1 = weeks.map(() => 0);
   const f2 = weeks.map(() => 0);
 
-  const source = String(dueText || "").trim().toLowerCase();
+  const source = String(dueText || "")
+    .toLowerCase()
+    .replace(/[’ʼ]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  const numbers = [...source.matchAll(/(?<!\d)(\d{1,2})(?!\d)/g)]
-    .map(match => Number(match[1]));
+  const [year, monthNumber] = month.split("-").map(Number);
+  const daysInMonth = new Date(
+    Date.UTC(year, monthNumber, 0)
+  ).getUTCDate();
+
+  let firstDay = null;
+
+  // "з 15 до 20", "з 20 по 30", "15-20", "15–20"
+  const range = source.match(
+    /(?:^|[^\d])(?:з\s*)?(\d{1,2})\s*(?:-|–|—|до|по)\s*(\d{1,2})(?!\d)/u
+  );
+
+  if (range) {
+    const from = Number(range[1]);
+    const to = Number(range[2]);
+
+    if (
+      from >= 1 &&
+      to <= daysInMonth &&
+      from <= to
+    ) {
+      firstDay = from;
+    }
+  }
+
+  // "до 10", "до 10-го", "не пізніше 10 числа".
+  // Плануємо на перший тиждень місяця.
+  if (firstDay === null) {
+    const deadline = source.match(
+      /(?:до|не пізніше)\s*(\d{1,2})(?:\s*[-–]?\s*(?:го|ого|числа))?/u
+    );
+
+    if (
+      deadline &&
+      Number(deadline[1]) >= 1 &&
+      Number(deadline[1]) <= daysInMonth
+    ) {
+      firstDay = 1;
+    }
+  }
+
+  // "20", "20 числа", "20-го числа", "20.10"
+  if (firstDay === null) {
+    const exact = source.match(
+      /^(?:з\s*)?(\d{1,2})(?:[-–]?(?:го|ого))?(?:\s*числа)?(?:\s*[.,]\s*\d{1,2})?(?:\s|$)/u
+    );
+
+    if (
+      exact &&
+      Number(exact[1]) >= 1 &&
+      Number(exact[1]) <= daysInMonth
+    ) {
+      firstDay = Number(exact[1]);
+    }
+  }
 
   let weekIndex = -1;
 
-  // Однозначний день місяця, наприклад "до 20 числа".
-  if (numbers.length === 1 && numbers[0] >= 1 && numbers[0] <= 31) {
-    weekIndex = weeks.findIndex(
-      week => numbers[0] >= week.from && numbers[0] <= week.to
+  if (firstDay !== null) {
+    const date = new Date(
+      Date.UTC(year, monthNumber - 1, firstDay)
     );
-  }
 
-  // Діапазон, наприклад "15-20". Автоматичний розподіл
-  // лише якщо обидві межі потрапляють в один тиждень.
-  if (numbers.length === 2 &&
-      /^(\d{1,2})\s*[-–]\s*(\d{1,2})$/.test(source)) {
-    const [from, to] = numbers;
+    const dayOfWeek = date.getUTCDay();
 
-    if (from <= to) {
+    // П'ятниця: план переносимо на наступний тиждень.
+    // Понеділок: залишаємо в поточному тижні.
+    const plannedDay = dayOfWeek === 5
+      ? firstDay + 3
+      : firstDay;
+
+    if (plannedDay <= daysInMonth) {
       weekIndex = weeks.findIndex(
-        week => from >= week.from && to <= week.to
+        week =>
+          plannedDay >= week.from &&
+          plannedDay <= week.to
       );
     }
   }
 
   if (weekIndex >= 0) {
-    f1[weekIndex] = Number(amountF1);
-    f2[weekIndex] = Number(amountF2);
+    f1[weekIndex] = Number(amountF1 || 0);
+    f2[weekIndex] = Number(amountF2 || 0);
   }
 
   return {
     f1,
     f2,
-    needsReview: weekIndex < 0 &&
-      (Number(amountF1) !== 0 || Number(amountF2) !== 0)
+    needsReview:
+      weekIndex < 0 &&
+      (
+        Number(amountF1 || 0) !== 0 ||
+        Number(amountF2 || 0) !== 0
+      )
   };
 }
 
@@ -2689,7 +2755,7 @@ app.post("/api/budget/:month/create", async (req, res, next) => {
       );
 
       const allocation = rentBudgetDefaultWeeks(
-        dueText, f1, f2, weeks
+        dueText, f1, f2, weeks, month
       );
 
       await client.query(
