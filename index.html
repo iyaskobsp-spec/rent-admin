@@ -1753,6 +1753,7 @@
     let budgetSortWeek = null;
     let budgetSortKind = null;
     let budgetSortDirection = 0;
+    let budgetAmountsExpanded = false;
 
     const budgetMoney = new Intl.NumberFormat("uk-UA", {
       minimumFractionDigits: 2,
@@ -2013,16 +2014,12 @@
       const top = document.createElement("tr");
       const bottom = document.createElement("tr");
 
+
       const fixedColumns = [
         ["ТТ", "budget-tt"],
         ["ID", "budget-id"],
         ["Область / адреса", "budget-address"],
-        ["Строк оплати", "budget-due"],
-        ["Ф1 дог., грн", "budget-amount"],
-        ["Ф2 дог., грн", "budget-amount"],
-        ["Ф1 бюджет, грн", "budget-amount"],
-        ["Ф2 бюджет, грн", "budget-amount"],
-        ["Всього, грн", "budget-amount"]
+        ["Строк оплати", "budget-due"]
       ];
 
       for (const [label, className] of fixedColumns) {
@@ -2031,6 +2028,67 @@
         top.append(th);
       }
 
+      const amountGroup = document.createElement("th");
+      amountGroup.className = "budget-amount-group";
+      amountGroup.rowSpan = 2;
+
+      if (budgetAmountsExpanded) {
+        const amountHeaders = [
+          "Ф1 дог., грн",
+          "Ф2 дог., грн",
+          "Ф1 бюджет, грн",
+          "Ф2 бюджет, грн"
+        ];
+
+        amountGroup.colSpan = 4;
+        amountGroup.rowSpan = 1;
+
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "budget-group-toggle";
+        toggle.textContent = "▾ Суми договору / бюджету";
+        toggle.title = "Згорнути колонки";
+        toggle.setAttribute("aria-expanded", "true");
+
+        amountGroup.append(toggle);
+
+        for (const label of amountHeaders) {
+          bottom.append(
+            budgetMakeCell("th", label, "budget-amount")
+          );
+        }
+
+        toggle.addEventListener("click", () => {
+          budgetAmountsExpanded = false;
+          budgetRenderHeader();
+          budgetRenderBody();
+          budgetRenderTotals();
+        });
+      } else {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "budget-group-toggle";
+        toggle.textContent = "▸ Суми договору / бюджету";
+        toggle.title = "Розгорнути колонки";
+        toggle.setAttribute("aria-expanded", "false");
+
+        toggle.addEventListener("click", () => {
+          budgetAmountsExpanded = true;
+          budgetRenderHeader();
+          budgetRenderBody();
+          budgetRenderTotals();
+        });
+
+        amountGroup.append(toggle);
+      }
+
+      top.append(amountGroup);
+
+      const totalHeader = budgetMakeCell(
+        "th", "Всього, грн", "budget-amount"
+      );
+      totalHeader.rowSpan = 2;
+      top.append(totalHeader);
 
       budgetData.weeks.forEach((week, index) => {
         const colorClass = index % 2 === 0
@@ -2181,40 +2239,70 @@
           )
         );
 
-        for (const kind of ["f1", "f2"]) {
-          const td = budgetMakeCell(
-            "td",
-            budgetFormat(line[`base_${kind}`]),
-            "budget-money budget-contract-sum"
-          );
 
-          if (budgetChanged(line, kind)) {
-            td.classList.add("budget-amount-changed");
-            td.title =
-              "Була зміна суми в реєстрі.\n" +
-              `На момент створення бюджету: ${
-                budgetFormat(line[`base_${kind}`])
-              } грн\n` +
-              `Зараз у реєстрі: ${
-                budgetFormat(line[`current_${kind}`])
-              } грн\n` +
-              "Бюджет автоматично не змінено.";
-            td.append(" ⚠");
+        if (budgetAmountsExpanded) {
+          for (const kind of ["f1", "f2"]) {
+            const td = budgetMakeCell(
+              "td",
+              budgetFormat(line[`base_${kind}`]),
+              "budget-money budget-contract-sum"
+            );
+
+            if (budgetChanged(line, kind)) {
+              td.classList.add("budget-amount-changed");
+              td.title =
+                "Була зміна суми в реєстрі.\n" +
+                `Було: ${budgetFormat(line[`base_${kind}`])} грн\n` +
+                `Зараз: ${budgetFormat(line[`current_${kind}`])} грн`;
+              td.append(" ⚠");
+            }
+
+            tr.append(td);
           }
 
-          tr.append(td);
-        }
+          for (const kind of ["f1", "f2"]) {
+            const td = document.createElement("td");
+            td.className = "budget-input-cell";
 
-        for (const kind of ["f1", "f2"]) {
+            td.append(budgetMakeMoneyInput(
+              line[`budget_${kind}`],
+              value => budgetSetAmount(line, kind, value)
+            ));
+
+            tr.append(td);
+          }
+        } else {
+          const contractTotal =
+            budgetNumber(line.base_f1) +
+            budgetNumber(line.base_f2);
+
+          const budgetTotal =
+            budgetNumber(line.budget_f1) +
+            budgetNumber(line.budget_f2);
+
           const td = document.createElement("td");
-          td.className = "budget-input-cell";
+          td.className = "budget-amount-summary";
 
-          td.append(budgetMakeMoneyInput(
-            line[`budget_${kind}`],
-            value => {
-              budgetSetAmount(line, kind, value);
-            }
-          ));
+          const contractText = document.createElement("div");
+          contractText.textContent =
+            `Дог.: ${budgetFormat(contractTotal)}`;
+
+          const budgetText = document.createElement("div");
+          budgetText.textContent =
+            `Бюдж.: ${budgetFormat(budgetTotal)}`;
+          budgetText.className = "budget-summary-value";
+
+          td.append(contractText, budgetText);
+
+          if (budgetChanged(line, "f1") ||
+              budgetChanged(line, "f2")) {
+            td.classList.add("budget-amount-changed");
+            td.title = "Була зміна Ф1 або Ф2 у реєстрі";
+
+            const warning = document.createElement("span");
+            warning.textContent = " ⚠";
+            td.append(warning);
+          }
 
           tr.append(td);
         }
@@ -2328,22 +2416,46 @@
       label.colSpan = 4;
       tr.append(label);
 
+
+      if (budgetAmountsExpanded) {
+        tr.append(
+          budgetMakeCell(
+            "td",
+            budgetFormat(all.reduce(
+              (s, l) => s + budgetNumber(l.base_f1), 0
+            ))
+          ),
+          budgetMakeCell(
+            "td",
+            budgetFormat(all.reduce(
+              (s, l) => s + budgetNumber(l.base_f2), 0
+            ))
+          ),
+          budgetMakeCell("td", budgetFormat(totalF1)),
+          budgetMakeCell("td", budgetFormat(totalF2))
+        );
+      } else {
+        const contractTotal = all.reduce(
+          (sum, line) =>
+            sum + budgetNumber(line.base_f1) +
+            budgetNumber(line.base_f2), 0
+        );
+
+        tr.append(
+          budgetMakeCell(
+            "td",
+            `Дог.: ${budgetFormat(contractTotal)} | ` +
+            `Бюдж.: ${budgetFormat(totalF1 + totalF2)}`,
+            "budget-amount-summary"
+          )
+        );
+      }
+
       tr.append(
         budgetMakeCell(
           "td",
-          budgetFormat(all.reduce(
-            (s, l) => s + budgetNumber(l.base_f1), 0
-          ))
-        ),
-        budgetMakeCell(
-          "td",
-          budgetFormat(all.reduce(
-            (s, l) => s + budgetNumber(l.base_f2), 0
-          ))
-        ),
-        budgetMakeCell("td", budgetFormat(totalF1)),
-        budgetMakeCell("td", budgetFormat(totalF2)),
-        budgetMakeCell("td", budgetFormat(totalF1 + totalF2))
+          budgetFormat(totalF1 + totalF2)
+        )
       );
 
       for (let i = 0; i < budgetData.weeks.length; i++) {
