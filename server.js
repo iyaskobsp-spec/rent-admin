@@ -2923,6 +2923,139 @@ app.patch("/api/budget/lines/:id", async (req, res, next) => {
 });
 
 
+app.post("/api/budget/:month/reallocate", async (req, res, next) => {
+  const month = req.params.month;
+
+  if (!rentBudgetValidMonth(month)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний місяць бюджету"
+    });
+  }
+
+  const client = await pool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const budgetResult = await client.query(
+      `SELECT id, status
+       FROM rent_budgets
+       WHERE budget_month = $1
+       FOR UPDATE`,
+      [month]
+    );
+
+    if (!budgetResult.rowCount) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        ok: false,
+        error: "Бюджет не знайдено"
+      });
+    }
+
+    const budget = budgetResult.rows[0];
+
+    if (budget.status !== "draft") {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "Оновлювати платежі можна лише в чернетці"
+      });
+    }
+
+    const weeks = rentBudgetWeeks(month);
+
+    const result = await client.query(
+      `SELECT *
+       FROM rent_budget_lines
+       WHERE budget_id = $1
+         AND needs_review = TRUE
+       FOR UPDATE`,
+      [budget.id]
+    );
+
+    let updated = 0;
+    let skipped = 0;
+    let unresolved = 0;
+
+    for (const line of result.rows) {
+      const oldF1 = line.weeks_f1;
+      const oldF2 = line.weeks_f2;
+
+      // Не чіпаємо рядки, де вже щось рознесено.
+      const hasAllocation =
+        !Array.isArray(oldF1) ||
+        !Array.isArray(oldF2) ||
+        oldF1.length !== weeks.length ||
+        oldF2.length !== weeks.length ||
+        [...oldF1, ...oldF2].some(value => Number(value) !== 0);
+
+      // Не чіпаємо змінені вручну бюджетні суми.
+      const hasChangedAmounts =
+        Number(line.budget_f1) !== Number(line.base_f1) ||
+        Number(line.budget_f2) !== Number(line.base_f2);
+
+      // Не чіпаємо рядки з коментарями працівника.
+      const hasComment = Boolean(
+        String(line.budget_comment || "").trim()
+      );
+
+      if (hasAllocation || hasChangedAmounts || hasComment) {
+        skipped++;
+        continue;
+      }
+
+      const allocation = rentBudgetDefaultWeeks(
+        line.payment_due_text,
+        Number(line.budget_f1),
+        Number(line.budget_f2),
+        weeks,
+        month
+      );
+
+      if (allocation.needsReview) {
+        unresolved++;
+        continue;
+      }
+
+      await client.query(
+        `UPDATE rent_budget_lines
+         SET weeks_f1 = $2::jsonb,
+             weeks_f2 = $3::jsonb,
+             needs_review = FALSE,
+             updated_at = NOW()
+         WHERE id = $1`,
+        [
+          line.id,
+          JSON.stringify(allocation.f1),
+          JSON.stringify(allocation.f2)
+        ]
+      );
+
+      updated++;
+    }
+
+    await client.query("COMMIT");
+
+    res.json({
+      ok: true,
+      updated,
+      skipped,
+      unresolved,
+      message:
+        `Автоматично рознесено: ${updated}. ` +
+        `Пропущено через ручні зміни: ${skipped}. ` +
+        `Потребують перевірки: ${unresolved}.`
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    next(error);
+  } finally {
+    client.release();
+  }
+});
+
 app.post("/api/budget/:month/approve", async (req, res, next) => {
   const month = req.params.month;
 
