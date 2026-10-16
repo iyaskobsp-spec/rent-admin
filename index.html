@@ -201,6 +201,9 @@
           <button id="budgetCreateBtn" type="button" hidden>
             Сформувати бюджет
           </button>
+          <button id="budgetReallocateBtn" type="button" hidden>
+            Рознести нерозпізнані платежі
+          </button>          
           <button id="budgetSaveBtn" type="button" hidden>
             Зберегти зміни
           </button>
@@ -1871,6 +1874,14 @@
       document.querySelector("#budgetCreateBtn").hidden =
         exists || !canWrite;
 
+      const reallocateBtn =
+        document.querySelector("#budgetReallocateBtn");
+
+      reallocateBtn.hidden = !exists || approved || !canWrite;
+
+      reallocateBtn.disabled =
+        budgetLoading || budgetDirty.size > 0;
+      
       document.querySelector("#budgetSaveBtn").hidden =
         !exists || approved || !canWrite;
 
@@ -2694,6 +2705,49 @@
       await budgetLoad(next);
     });
 
+
+    document.querySelector("#budgetReallocateBtn").addEventListener(
+      "click",
+      async () => {
+        if (!budgetEditable()) return;
+
+        if (budgetDirty.size) {
+          budgetSetMessage(
+            "Спочатку збережіть внесені зміни.",
+            true
+          );
+          return;
+        }
+
+        const month = budgetMonthInput.value;
+
+        if (!confirm(
+          `Автоматично рознести нерозпізнані платежі за ${month}?\n\n` +
+          "Уже рознесені платежі та ручні коригування залишаться без змін."
+        )) return;
+
+        budgetLoading = true;
+        budgetSyncControls();
+        budgetSetMessage("Розносимо платежі за договірними строками...");
+
+        try {
+          const result = await budgetRequest(
+            `/api/budget/${encodeURIComponent(month)}/reallocate`,
+            { method: "POST" }
+          );
+
+          await budgetLoad(month);
+
+          budgetSetMessage(result.message);
+        } catch (error) {
+          budgetSetMessage(error.message, true);
+        } finally {
+          budgetLoading = false;
+          budgetSyncControls();
+        }
+      }
+    );
+    
     document.querySelector("#budgetCreateBtn").addEventListener(
       "click", budgetCreate
     );
