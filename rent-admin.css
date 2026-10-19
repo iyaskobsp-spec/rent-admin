@@ -1785,217 +1785,338 @@ button.module-card:hover {
 
 /* ========================================
    ПЛАТІЖНИЙ КАЛЕНДАР
+   ТАБЛИЧНА ФОРМА НА ОСНОВІ БЮДЖЕТУ
    ======================================== */
 
 #calendarModule[hidden],
-#calendarMoveDialog[hidden],
-.calendar-week-body[hidden] {
+#calendarMoveDialog[hidden] {
   display: none !important;
 }
 
-.calendar-toolbar {
-  align-items: center;
+#calendarModule .calendar-budget-wrap {
+  max-height: calc(100vh - 280px);
+  min-height: 400px;
+  overflow: auto;
 }
 
-.calendar-weeks {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.calendar-week {
-  border: 1px solid #dce5f0;
-  border-radius: 12px;
-  background: white;
-  overflow: hidden;
-}
-
-.calendar-week-bar {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 12px 14px;
-  background: #f4f7fb;
+#calendarBudgetTable {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
   font-size: 12px;
 }
 
-.calendar-week-orange .calendar-week-bar {
+#calendarBudgetTable th,
+#calendarBudgetTable td {
+  padding: 9px 10px;
+  border-right: 1px solid #e8edf3;
+  border-bottom: 1px solid #e8edf3;
+  vertical-align: middle;
+  line-height: 1.4;
+  min-width: 115px;
+}
+
+#calendarBudgetTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #eaf0f7;
+  color: #30425b;
+  font-weight: 700;
+  text-align: center;
+}
+
+#calendarBudgetTable thead tr:nth-child(2) th {
+  position: sticky;
+  top: 210px;
+  background: #f3f7fb;
+}
+
+#calendarBudgetTable tbody td {
+  background: #fff;
+}
+
+#calendarBudgetTable tbody tr:nth-child(even) td {
+  background: #fbfcfe;
+}
+
+#calendarBudgetTable .budget-tt,
+#calendarBudgetTable .budget-id,
+#calendarBudgetTable .budget-address {
+  position: sticky;
+  z-index: 4;
+  background: #fff;
+}
+
+#calendarBudgetTable .budget-tt {
+  left: 0;
+  width: 70px;
+  min-width: 70px;
+  font-weight: 700;
+}
+
+#calendarBudgetTable .budget-id {
+  left: 70px;
+  width: 105px;
+  min-width: 105px;
+  white-space: nowrap;
+}
+
+#calendarBudgetTable .budget-address {
+  left: 175px;
+  width: 260px;
+  min-width: 260px;
+  max-width: 260px;
+  box-shadow: 7px 0 12px -10px #7b8b9e;
+}
+
+#calendarBudgetTable thead .budget-tt,
+#calendarBudgetTable thead .budget-id,
+#calendarBudgetTable thead .budget-address {
+  z-index: 8;
+  background: #eaf0f7;
+}
+
+#calendarBudgetTable .budget-due {
+  min-width: 160px;
+  max-width: 220px;
+  white-space: normal;
+  color: #566d87;
+}
+
+#calendarBudgetTable .budget-amount {
+  min-width: 125px;
+}
+
+#calendarBudgetTable .budget-money {
+  white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+#calendarBudgetTable .budget-line-total {
+  background: #f0f6fd;
+  font-weight: 700;
+}
+
+#calendarBudgetTable .budget-comment {
+  min-width: 260px;
+  max-width: 320px;
+  white-space: normal;
+}
+
+#calendarBudgetTable .calendar-budget-amounts {
+  background: #eaf0f7;
+}
+
+#calendarBudgetTable th.budget-week-orange,
+#calendarBudgetTable td.budget-week-orange {
   background: #fff2e4;
 }
 
-.calendar-week-green .calendar-week-bar {
+#calendarBudgetTable th.budget-week-green,
+#calendarBudgetTable td.budget-week-green {
   background: #eaf6ed;
 }
 
-.calendar-week-toggle {
-  font-weight: 700;
-  font-size: 13px;
-  margin-right: auto;
+#calendarBudgetTable .calendar-week-head {
+  min-width: 250px;
+  padding: 9px 12px 12px;
 }
 
-.calendar-week-bar button {
-  border: 1px solid #b9c9dd;
-  border-radius: 8px;
+#calendarBudgetTable .calendar-week-toggle {
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, .55);
+  color: #30425b;
+  font-weight: 700;
+  font-size: 12px;
+}
+
+#calendarBudgetTable .calendar-week-need {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  margin: 10px 0;
+  font-size: 11px;
+}
+
+#calendarBudgetTable .calendar-week-need strong {
+  color: #203956;
+  font-size: 12px;
+}
+
+#calendarBudgetTable .calendar-week-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(64, 91, 121, .2);
+  font-size: 11px;
+}
+
+#calendarBudgetTable .calendar-quota-input {
+  width: 135px;
+  height: 35px;
+  padding: 0 8px;
+  border: 1px solid #cbd8e8;
+  border-radius: 7px;
   background: #fff;
-  color: #294667;
-  padding: 9px 12px;
+  text-align: right;
+}
+
+#calendarBudgetTable .calendar-action {
+  min-height: 29px;
+  padding: 5px 9px;
+  border: 1px solid #b9cce0;
+  border-radius: 6px;
+  background: #fff;
+  color: #285782;
+  font-size: 11px;
+  font-weight: 650;
   cursor: pointer;
 }
 
-.calendar-week-bar button:disabled {
+#calendarBudgetTable .calendar-action:disabled {
   opacity: .45;
   cursor: default;
 }
 
-.calendar-quota-label {
-  display: flex;
-  gap: 7px;
-  align-items: center;
-  font-weight: 650;
-}
-
-.calendar-quota-input {
-  width: 125px;
-  height: 34px;
-  border: 1px solid #ccd8e6;
-  border-radius: 7px;
-  padding: 0 8px;
-}
-
-.calendar-week-body {
-  max-height: 70vh;
-  overflow: auto;
-}
-
-.calendar-counters {
-  padding: 12px 14px;
-  background: #f8fafd;
-  font-size: 12px;
-  font-weight: 650;
-  color: #34506c;
-}
-
-.calendar-day {
-  padding: 10px 14px;
-  border-top: 1px solid #e0e7f1;
-  overflow-x: auto;
-}
-
-.calendar-day h3 {
-  font-size: 13px;
-  margin: 5px 0 10px;
-  color: #304765;
-}
-
-.calendar-table {
-  border-collapse: collapse;
-  min-width: 1060px;
-  width: 100%;
-  font-size: 12px;
-}
-
-.calendar-table th,
-.calendar-table td {
-  border: 1px solid #e4eaf2;
-  padding: 9px;
+#calendarBudgetTable .calendar-week-payment {
+  min-width: 145px;
   vertical-align: top;
-  text-align: left;
 }
 
-.calendar-table th {
-  background: #edf3fa;
-  color: #334c66;
+#calendarBudgetTable .calendar-payment-entry {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 5px 0 10px;
+  border-bottom: 1px dashed #cbd6e3;
 }
 
-.calendar-table td:nth-child(5),
-.calendar-table td:nth-child(6),
-.calendar-table td:nth-child(7) {
+#calendarBudgetTable .calendar-payment-entry:last-child {
+  border-bottom: none;
+}
+
+#calendarBudgetTable .calendar-payment-amount {
+  font-weight: 700;
+  color: #203956;
   white-space: nowrap;
 }
 
-.calendar-number {
-  font-variant-numeric: tabular-nums;
-}
-
-.calendar-sub {
+#calendarBudgetTable .calendar-payment-date,
+#calendarBudgetTable .calendar-object-address {
   display: block;
   margin-top: 5px;
-  color: #6b788a;
+  color: #64758b;
   font-size: 11px;
-  line-height: 1.45;
-  max-width: 300px;
+  line-height: 1.4;
   white-space: normal;
 }
 
-.calendar-tag {
-  display: inline-block;
-  padding: 4px 7px;
-  margin: 0 5px 4px 0;
-  border-radius: 5px;
+#calendarBudgetTable .calendar-payment-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-size: 10px;
-  font-weight: 700;
-  white-space: nowrap;
 }
 
-.calendar-allow {
+#calendarBudgetTable .calendar-money-input {
+  width: 108px;
+  height: 32px;
+  padding: 0 7px;
+  border: 1px solid #cbd8e8;
+  border-radius: 6px;
+  background: #fff;
+  text-align: right;
+}
+
+#calendarBudgetTable .calendar-tag {
+  display: inline-block;
+  margin: 0 4px 5px 0;
+  padding: 4px 7px;
+  border-radius: 6px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+#calendarBudgetTable .calendar-allow {
   background: #e4f5eb;
   color: #146842;
 }
 
-.calendar-must {
+#calendarBudgetTable .calendar-must {
   background: #fff0d6;
   color: #94620a;
 }
 
-.calendar-moved {
+#calendarBudgetTable .calendar-moved {
   background: #e4eefc;
   color: #265b92;
 }
 
-.calendar-confirmed {
-  background: #f3fbf5;
+#calendarBudgetTable .calendar-comment-text {
+  color: #52657d;
+  font-size: 11px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
-.calendar-debt {
-  display: block;
+#calendarBudgetTable .calendar-debt {
   color: #b32d42;
   font-weight: 700;
   font-size: 11px;
 }
 
-.calendar-quiet {
-  color: #627b91;
+#calendarBudgetTable .calendar-ok,
+#calendarBudgetTable .calendar-paid {
+  color: #19714e;
+  font-weight: 700;
+  font-size: 11px;
 }
 
-.calendar-money-input {
-  width: 100px;
-  height: 32px;
-  border: 1px solid #d2ddea;
-  border-radius: 6px;
-  padding: 0 6px;
+#calendarBudgetTable tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  background: #dce8f6;
+  color: #203956;
+  font-weight: 700;
   text-align: right;
-}
-
-.calendar-action {
-  padding: 7px 10px;
-  border: 1px solid #cbd8e8;
-  background: #fff;
-  color: #285782;
-  border-radius: 7px;
   white-space: nowrap;
 }
 
-.calendar-empty {
-  padding: 10px 14px;
-  font-size: 12px;
-  color: #8390a0;
+#calendarBudgetTable tfoot td:first-child {
+  text-align: left;
 }
 
-.calendar-dialog {
+#calendarBudgetTable tbody tr:hover td:not(.budget-tt):not(.budget-id):not(.budget-address) {
+  filter: brightness(.98);
+}
+
+/* Модальне вікно перенесення */
+
+#calendarMoveDialog {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+#calendarMoveDialog .calendar-dialog {
   height: auto;
+  width: min(520px, 100%);
   max-height: 90vh;
-  width: min(540px, 100%);
 }
 
 .calendar-move-form {
@@ -2006,15 +2127,17 @@ button.module-card:hover {
 }
 
 .calendar-move-form p {
-  font-size: 12px;
+  margin: 0;
   color: #63748b;
-  line-height: 1.5;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .calendar-move-form label {
   display: flex;
   flex-direction: column;
   gap: 7px;
+  color: #304765;
   font-size: 12px;
   font-weight: 650;
 }
@@ -2033,10 +2156,11 @@ button.module-card:hover {
 }
 
 .calendar-move-actions button {
+  padding: 10px 13px;
   border: 1px solid #b8c7d8;
   border-radius: 8px;
-  padding: 10px 13px;
   background: #f5f8fc;
+  color: #233b5a;
 }
 
 .calendar-move-actions button[type="submit"] {
@@ -2045,15 +2169,15 @@ button.module-card:hover {
 }
 
 @media (max-width: 700px) {
-  .calendar-week-bar {
-    align-items: stretch;
+  #calendarModule .calendar-budget-wrap {
+    max-height: calc(100vh - 220px);
   }
 
-  .calendar-week-body {
-    max-height: none;
+  #calendarBudgetTable {
+    font-size: 11px;
   }
 
-  .calendar-dialog {
+  #calendarMoveDialog .calendar-dialog {
     max-height: 95vh;
   }
 }
