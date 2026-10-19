@@ -2737,25 +2737,51 @@ app.get("/api/calendar/:month", async (req, res, next) => {
   }
 
   try {
-    const budget = await pool.query(
-      `SELECT status
+    const budgetResult = await pool.query(
+      `SELECT id, status
        FROM rent_budgets
        WHERE budget_month = $1`,
       [month]
     );
 
-    const items = await pool.query(
+    const budget = budgetResult.rows[0] || null;
+
+    let lines = [];
+
+    if (budget) {
+      const lineResult = await pool.query(
+        `SELECT
+           l.*,
+           c.payment_terms,
+           c.critical_terms
+         FROM rent_budget_lines l
+         LEFT JOIN rent_contracts c
+           ON c.id = l.contract_id
+         WHERE l.budget_id = $1
+         ORDER BY l.tt_code NULLS LAST, l.contract_id`,
+        [budget.id]
+      );
+
+      lines = lineResult.rows;
+    }
+
+    const itemsResult = await pool.query(
       `SELECT
          i.*,
          l.tt_code,
          l.object_name,
+         l.region,
          l.address,
          l.payment_due_text,
          l.budget_comment,
+         l.base_f1,
+         l.base_f2,
+         l.budget_f1,
+         l.budget_f2,
          c.payment_terms,
          c.critical_terms
        FROM rent_calendar_items i
-       LEFT JOIN rent_budget_lines l
+       JOIN rent_budget_lines l
          ON l.id = i.budget_line_id
        LEFT JOIN rent_contracts c
          ON c.id = i.contract_id
@@ -2764,26 +2790,28 @@ app.get("/api/calendar/:month", async (req, res, next) => {
          AND i.due_date < ($1::date + INTERVAL '1 month')
        )
        OR i.original_month = $2
-       ORDER BY i.due_date, i.contract_id, i.form, i.id`,
+       ORDER BY i.due_date, l.tt_code, i.contract_id, i.form, i.id`,
       [`${month}-01`, month]
     );
 
-    const quota = await pool.query(
+    const quotaResult = await pool.query(
       `SELECT
          week_start::text AS week_start,
          amount
        FROM rent_calendar_quota
        WHERE week_start >= ($1::date - INTERVAL '7 days')
-         AND week_start < ($1::date + INTERVAL '1 month')`,
+         AND week_start < ($1::date + INTERVAL '1 month')
+       ORDER BY week_start`,
       [`${month}-01`]
     );
 
-    res.json({
+    return res.json({
       ok: true,
-      budgetStatus: budget.rows[0]?.status || null,
+      budgetStatus: budget?.status || null,
       weeks: rentBudgetWeeks(month),
-      items: items.rows,
-      quotas: quota.rows
+      lines,
+      items: itemsResult.rows,
+      quotas: quotaResult.rows
     });
   } catch (error) {
     next(error);
