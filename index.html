@@ -281,47 +281,105 @@
 
       <h1>Платіжний календар</h1>
       <p class="subtitle">
-        Планування платежів, квоти, перенесення та контроль фактичних оплат
+        План, перенесення, загальна квота Ф1 + Ф2 та фактичні оплати
       </p>
 
-      <div class="budget-toolbar">
+      <div class="budget-toolbar calendar-toolbar">
         <label class="budget-month-field">
-          <span>Місяць календаря</span>
+          <span>Місяць</span>
           <input id="calendarMonth" type="month">
         </label>
 
         <div class="budget-toolbar-actions">
-          <button id="calendarExpandAllBtn" type="button">
-            Розгорнути всі тижні
+          <button id="calendarInit" type="button">
+            Завантажити план з бюджету
           </button>
-          <button id="calendarCollapseAllBtn" type="button">
-            Згорнути всі тижні
+          <button id="calendarExpand" type="button">
+            Розгорнути всі
+          </button>
+          <button id="calendarCollapse" type="button">
+            Згорнути всі
+          </button>
+          <button id="calendarRefresh" type="button">
+            Оновити
           </button>
         </div>
       </div>
 
+      <p id="calendarMessage" class="budget-message" role="status"></p>
+
       <div class="budget-summary">
         <div>
-          <span>Планові платежі</span>
-          <strong id="calendarPlannedTotal">0,00</strong>
+          <span>Початковий план</span>
+          <strong id="calendarBase">0,00</strong>
         </div>
         <div>
-          <span>Перенесені платежі</span>
-          <strong id="calendarMovedTotal">0,00</strong>
+          <span>Актуальний план у місяці</span>
+          <strong id="calendarPlan">0,00</strong>
         </div>
         <div>
-          <span>Загальна квота</span>
-          <strong id="calendarQuotaTotal">0,00</strong>
+          <span>Квоти за тижнями</span>
+          <strong id="calendarQuota">0,00</strong>
         </div>
         <div>
-          <span>Різниця з квотою</span>
-          <strong id="calendarQuotaDifference">0,00</strong>
+          <span>Нестача квоти</span>
+          <strong id="calendarGap">0,00</strong>
         </div>
+      </div>
+
+      <div class="budget-filters">
+        <input id="calendarSearch" type="search"
+               placeholder="Пошук ТТ, договору, адреси">
+        <span id="calendarCount"></span>
       </div>
 
       <div id="calendarWeeks" class="calendar-weeks"></div>
 
-      <p id="calendarMessage" class="budget-message" role="status"></p>
+      <div id="calendarMoveDialog" class="contract-modal" hidden>
+        <div class="contract-modal-backdrop" data-calendar-close></div>
+
+        <section class="contract-dialog calendar-dialog"
+                 role="dialog"
+                 aria-modal="true"
+                 aria-labelledby="calendarMoveTitle">
+
+          <header class="contract-dialog-header">
+            <h2 id="calendarMoveTitle">Перенести платіж</h2>
+            <button id="calendarMoveClose"
+                    type="button"
+                    class="contract-close">×</button>
+          </header>
+
+          <form id="calendarMoveForm" class="calendar-move-form">
+            <p id="calendarMoveInfo"></p>
+
+            <label>
+              Сума перенесення, грн
+              <input id="calendarMoveAmount"
+                     type="number"
+                     min="0.01"
+                     step="0.01"
+                     required>
+            </label>
+
+            <label>
+              Нова дата
+              <input id="calendarMoveDate"
+                     type="date"
+                     required>
+            </label>
+
+            <div class="calendar-move-actions">
+              <button type="button" id="calendarMoveCancel">
+                Скасувати
+              </button>
+              <button type="submit">
+                Зберегти перенесення
+              </button>
+            </div>
+          </form>
+        </section>
+      </div>
     </section>
     
     <section id="registryModule" hidden>
@@ -2727,168 +2785,874 @@
     // ПЛАТІЖНИЙ КАЛЕНДАР
     // ========================================
 
-    const calendarModule = document.querySelector("#calendarModule");
-    const calendarMonthInput = document.querySelector("#calendarMonth");
-    const calendarWeeksContainer = document.querySelector("#calendarWeeks");
-    const calendarExpandedWeeks = new Set();
+    const cal = id => document.getElementById(id);
 
-    const calendarMoney = new Intl.NumberFormat("uk-UA", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2
-    });
+    let calData = { items: [], quotas: [], weeks: [] };
+    let calBusy = false;
+    let calMovingId = null;
 
-    function calendarGetWeeks(month) {
-      if (!/^\d{4}-\d{2}$/.test(month)) return [];
+    const calExpanded = new Set();
+    const calActualDraft = new Map();
 
-      const [year, monthNumber] = month.split("-").map(Number);
-      const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
-      const weeks = [];
+    const calFmt = n => budgetMoney.format(Number(n || 0));
+    const calIso = date => String(date || "").slice(0, 10);
+    const calCents = n => Math.round(Number(n || 0) * 100);
+    const calMoney = n => `${calFmt(n)} грн`;
 
-      let day = 1;
+    const calCanWrite = () =>
+      ["admin", "editor"].includes(rentCurrentUser?.role);
 
-      while (day <= lastDay) {
-        const date = new Date(Date.UTC(year, monthNumber - 1, day));
-        const weekday = (date.getUTCDay() + 6) % 7;
-        const endDay = Math.min(day + 6 - weekday, lastDay);
+    const calValid = n =>
+      Number.isFinite(Number(n)) &&
+      Number(n) >= 0 &&
+      /^\d+(?:\.\d{1,2})?$/.test(String(n));
 
-        weeks.push({
-          number: weeks.length + 1,
-          startDay: day,
-          endDay
-        });
+    function calMonday(iso) {
+      const d = new Date(`${iso}T00:00:00Z`);
+      d.setUTCDate(
+        d.getUTCDate() - (d.getUTCDay() + 6) % 7
+      );
+      return d.toISOString().slice(0, 10);
+    }
 
-        day = endDay + 1;
+    function calWeekDays(month, week) {
+      const days = [];
+
+      for (let day = week.from; day <= week.to; day++) {
+        days.push(
+          `${month}-${String(day).padStart(2, "0")}`
+        );
       }
 
-      return weeks;
+      return days;
     }
 
-    function calendarFormatDay(year, month, day) {
-      const date = new Date(Date.UTC(year, month - 1, day));
+    function calSetMessage(message, error = false) {
+      cal("calendarMessage").textContent = message;
+      cal("calendarMessage").classList.toggle("is-error", error);
+    }
 
-      return date.toLocaleDateString("uk-UA", {
-        timeZone: "UTC",
-        weekday: "short",
-        day: "2-digit",
-        month: "2-digit"
+    async function calRequest(url, options = {}) {
+      const response = await fetch(`${budgetApiBase}${url}`, {
+        ...options,
+        headers: {
+          Authorization: `Bearer ${rentSessionToken}`,
+          ...(options.body
+            ? { "Content-Type": "application/json" }
+            : {}),
+          ...(options.headers || {})
+        }
       });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || !data.ok) {
+        throw new Error(
+          data.error || "Помилка платіжного календаря"
+        );
+      }
+
+      return data;
     }
 
-    function calendarRender() {
-      const month = calendarMonthInput.value;
-      const weeks = calendarGetWeeks(month);
-      const [year, monthNumber] = month.split("-").map(Number);
+    async function calLoad() {
+      const month = cal("calendarMonth").value;
+      if (!month) return;
 
-      calendarWeeksContainer.replaceChildren();
+      calBusy = true;
+      calSetMessage("Завантажуємо платежі...");
 
-      weeks.forEach(week => {
-        const section = document.createElement("section");
-        section.className = "calendar-week";
-        section.style.cssText =
-          "margin-bottom:12px;border:1px solid #dce5f0;" +
-          "border-radius:12px;background:#fff;overflow:hidden;";
+      try {
+        calData = await calRequest(`/api/calendar/${month}`);
+        calActualDraft.clear();
+        calRender();
 
-        const header = document.createElement("button");
-        header.type = "button";
-        header.className = "calendar-week-header";
-        header.style.cssText =
-          "display:flex;align-items:center;justify-content:space-between;" +
-          "gap:12px;width:100%;padding:16px;border:0;" +
-          "background:#eaf0f7;color:#233b5a;text-align:left;font-weight:700;";
+        calSetMessage(
+          calData.budgetStatus === "approved"
+            ? "Платежі зберігаються окремо від затвердженого бюджету."
+            : "Затвердженого бюджету немає. План можна завантажити після затвердження."
+        );
+      } catch (error) {
+        calSetMessage(error.message, true);
+      } finally {
+        calBusy = false;
+      }
+    }
 
-        const isExpanded = calendarExpandedWeeks.has(week.number);
+    function calItemNote(item) {
+      const critical = item.critical_terms || {};
+      const payment = item.payment_terms || {};
 
-        header.textContent =
-          `${isExpanded ? "▾" : "▸"} Тиждень ${week.number} ` +
-          `(${week.startDay}–${week.endDay} число)`;
+      return [
+        item.payment_due_text,
+        ...Object.entries(critical)
+          .map(([key, value]) => `${key}: ${value}`),
+        ...Object.entries(payment)
+          .filter(([key]) => /строк|перенес|оплат/i.test(key))
+          .map(([key, value]) => `${key}: ${value}`),
+        item.budget_comment
+      ].filter(Boolean).join(" · ") ||
+        "Умови оплати не зазначено";
+    }
 
-        const details = document.createElement("div");
-        details.hidden = !isExpanded;
+    function calMovable(item) {
+      const notes = Object.entries(item.critical_terms || {})
+        .filter(([key, value]) =>
+          /перенес|примітк|shift/i.test(key) ||
+          /перенес/i.test(String(value || ""))
+        )
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(" ")
+        .toLowerCase();
 
-        for (let day = week.startDay; day <= week.endDay; day++) {
-          const row = document.createElement("div");
-          row.style.cssText =
-            "display:grid;grid-template-columns:125px 1fr 1fr;" +
-            "gap:12px;align-items:center;padding:13px 16px;" +
-            "border-top:1px solid #e8edf3;font-size:12px;";
+      return Boolean(notes) &&
+        !/не можна|не дозвол|неможлив|заборон|відсутн|без перенес|перенес[^.;]{0,40}:\s*(ні|ніт|no|false)/i
+          .test(notes) &&
+        /можлив|дозвол|можна|так|погоджен/i.test(notes);
+    }
 
-          const dateCell = document.createElement("strong");
-          dateCell.textContent =
-            calendarFormatDay(year, monthNumber, day);
+    function calWeekFinished(monday) {
+      const d = new Date(`${monday}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() + 7);
 
-          const plannedCell = document.createElement("span");
-          plannedCell.textContent = "План: 0,00 грн";
+      const today = new Intl.DateTimeFormat("sv-SE", {
+        timeZone: "Europe/Kyiv",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).format(new Date());
 
-          const movedCell = document.createElement("span");
-          movedCell.textContent = "Перенесено: 0,00 грн";
+      return today >= d.toISOString().slice(0, 10);
+    }
 
-          row.append(dateCell, plannedCell, movedCell);
-          details.append(row);
+    function calEl(tag, className, text) {
+      const element = document.createElement(tag);
+
+      if (className) element.className = className;
+      if (text !== undefined) element.textContent = text;
+
+      return element;
+    }
+
+    function calButton(label, callback, disabled = false) {
+      const button = calEl("button", "calendar-action", label);
+
+      button.type = "button";
+      button.disabled = disabled;
+      button.addEventListener("click", callback);
+
+      return button;
+    }
+
+    function calSummary() {
+      const month = cal("calendarMonth").value;
+      const items = calData.items || [];
+
+      const visible = items.filter(item =>
+        calIso(item.due_date).startsWith(month)
+      );
+
+      const startWeeks = new Set(
+        (calData.weeks || []).map(week =>
+          calMonday(
+            `${month}-${String(week.from).padStart(2, "0")}`
+          )
+        )
+      );
+
+      const quota = (calData.quotas || [])
+        .filter(q => startWeeks.has(calIso(q.week_start)))
+        .reduce((sum, q) => sum + Number(q.amount), 0);
+
+      const plan = visible.reduce(
+        (sum, item) => sum + Number(item.amount), 0
+      );
+
+      const base = items
+        .filter(item =>
+          item.original_month === month && !item.parent_id
+        )
+        .reduce(
+          (sum, item) => sum + Number(item.original_amount), 0
+        );
+
+      cal("calendarBase").textContent = calFmt(base);
+      cal("calendarPlan").textContent = calFmt(plan);
+      cal("calendarQuota").textContent = calFmt(quota);
+      cal("calendarGap").textContent =
+        calFmt(Math.max(0, plan - quota));
+
+      cal("calendarInit").disabled =
+        !calCanWrite() ||
+        calBusy ||
+        calData.budgetStatus !== "approved";
+    }
+
+    function calRows(container, items, confirmed) {
+      const table = calEl("table", "calendar-table");
+      const head = calEl("thead");
+      const headerRow = calEl("tr");
+
+      [
+        "ТТ / договір",
+        "Форма",
+        "Дата",
+        "Тип / умови оплати",
+        "План",
+        "За квотою",
+        "Факт",
+        "Дії"
+      ].forEach(label =>
+        headerRow.append(calEl("th", "", label))
+      );
+
+      head.append(headerRow);
+      table.append(head);
+
+      const body = calEl("tbody");
+      const canEdit = calCanWrite();
+
+      for (const item of items) {
+        const tr = calEl(
+          "tr",
+          item.confirmed_at ? "calendar-confirmed" : ""
+        );
+
+        const ident = calEl("td");
+
+        ident.append(
+          calEl(
+            "strong",
+            "",
+            `${item.tt_code || "ТТ ?"} · ${item.contract_id}`
+          )
+        );
+
+        ident.append(
+          calEl(
+            "small",
+            "calendar-sub",
+            item.object_name || item.address || ""
+          )
+        );
+
+        tr.append(ident);
+
+        tr.append(
+          calEl("td", "", item.form.toUpperCase())
+        );
+
+        tr.append(
+          calEl(
+            "td",
+            "",
+            calIso(item.due_date).split("-").reverse().join(".")
+          )
+        );
+
+        const info = calEl("td");
+
+        info.append(
+          calEl(
+            "span",
+            calMovable(item)
+              ? "calendar-tag calendar-allow"
+              : "calendar-tag calendar-must",
+            calMovable(item)
+              ? "Можливе перенесення"
+              : "Обов’язковий"
+          )
+        );
+
+        if (item.parent_id) {
+          info.append(
+            calEl(
+              "span",
+              "calendar-tag calendar-moved",
+              "Перенесено"
+            )
+          );
         }
 
-        header.addEventListener("click", () => {
-          if (calendarExpandedWeeks.has(week.number)) {
-            calendarExpandedWeeks.delete(week.number);
-          } else {
-            calendarExpandedWeeks.add(week.number);
+        info.append(
+          calEl("small", "calendar-sub", calItemNote(item))
+        );
+
+        tr.append(info);
+
+        tr.append(
+          calEl("td", "calendar-number", calMoney(item.amount))
+        );
+
+        const funding = calEl("td", "calendar-number");
+
+        if (!confirmed && canEdit && Number(item.amount) > 0) {
+          const input = calEl("input", "calendar-money-input");
+          input.type = "number";
+          input.min = "0";
+          input.step = "0.01";
+          input.value = Number(item.funded).toFixed(2);
+          input.title = "Сума для фінансування за квотою";
+
+          input.addEventListener("change", async () => {
+            if (
+              !calValid(input.value) ||
+              calCents(input.value) > calCents(item.amount)
+            ) {
+              alert("Перевірте суму");
+              calRender();
+              return;
+            }
+
+            try {
+              await calRequest(
+                `/api/calendar/items/${item.id}/funded`,
+                {
+                  method: "PATCH",
+                  body: JSON.stringify({
+                    amount: input.value
+                  })
+                }
+              );
+
+              await calLoad();
+            } catch (error) {
+              alert(error.message);
+              calRender();
+            }
+          });
+
+          funding.append(input);
+        } else {
+          funding.textContent = calMoney(item.funded);
+        }
+
+        tr.append(funding);
+
+        const fact = calEl("td", "calendar-number");
+
+        if (confirmed) {
+          fact.textContent = calMoney(item.actual);
+
+          const debt = Math.max(
+            0,
+            calCents(item.amount) - calCents(item.actual)
+          ) / 100;
+
+          if (debt > 0) {
+            fact.append(
+              calEl(
+                "small",
+                "calendar-debt",
+                `Борг: ${calMoney(debt)}`
+              )
+            );
           }
+        } else if (canEdit && Number(item.amount) > 0) {
+          const input = calEl("input", "calendar-money-input");
 
-          calendarRender();
-        });
+          input.type = "number";
+          input.min = "0";
+          input.step = "0.01";
 
-        section.append(header, details);
-        calendarWeeksContainer.append(section);
+          const key = String(item.id);
+
+          input.value = calActualDraft.has(key)
+            ? calActualDraft.get(key)
+            : Number(item.funded).toFixed(2);
+
+          input.title =
+            "Фактична оплата. Збережеться після підтвердження тижня";
+
+          input.addEventListener("input", () =>
+            calActualDraft.set(key, input.value)
+          );
+
+          fact.append(input);
+        } else {
+          fact.textContent = "—";
+        }
+
+        tr.append(fact);
+
+        const actions = calEl("td");
+
+        if (
+          !confirmed &&
+          canEdit &&
+          Number(item.amount) > 0 &&
+          calMovable(item)
+        ) {
+          actions.append(
+            calButton("Перенести", () => calOpenMove(item))
+          );
+        }
+
+        tr.append(actions);
+        body.append(tr);
       }
 
-      document.querySelector("#calendarMessage").textContent =
-        "Календарна сітка готова. Завантаження платежів і квот " +
-        "підключимо наступним етапом.";
+      table.append(body);
+      container.append(table);
     }
 
-    document.querySelector("#openCalendarBtn").addEventListener(
-      "click",
-      () => {
-        document.querySelector("#moduleHome").hidden = true;
-        document.querySelector("#registryModule").hidden = true;
-        document.querySelector("#usersModule").hidden = true;
-        document.querySelector("#budgetModule").hidden = true;
+    function calRender() {
+      calSummary();
 
-        calendarModule.hidden = false;
+      const month = cal("calendarMonth").value;
+      const weeks = calData.weeks || [];
+      const query = cal("calendarSearch")
+        .value.toLocaleLowerCase("uk").trim();
 
-        calendarMonthInput.value ||= budgetUserMonth();
-        calendarRender();
-      }
-    );
+      const root = cal("calendarWeeks");
+      root.replaceChildren();
 
-    document.querySelector("#backFromCalendarBtn").addEventListener(
-      "click",
-      () => {
-        calendarModule.hidden = true;
-        document.querySelector("#moduleHome").hidden = false;
-      }
-    );
+      let shown = 0;
 
-    calendarMonthInput.addEventListener("change", () => {
-      calendarExpandedWeeks.clear();
-      calendarRender();
-    });
+      for (const [index, week] of weeks.entries()) {
+        const dates = calWeekDays(month, week);
+        const monday = calMonday(dates[0]);
 
-    document.querySelector("#calendarExpandAllBtn").addEventListener(
-      "click",
-      () => {
-        calendarGetWeeks(calendarMonthInput.value).forEach(week => {
-          calendarExpandedWeeks.add(week.number);
+        const full = (calData.items || [])
+          .filter(item =>
+            dates.includes(calIso(item.due_date)) &&
+            Number(item.amount) > 0
+          );
+
+        const all = full.filter(item =>
+          !query ||
+          [
+            item.contract_id,
+            item.tt_code,
+            item.address,
+            item.object_name
+          ].join(" ")
+            .toLocaleLowerCase("uk")
+            .includes(query)
+        );
+
+        shown += all.length;
+
+        const quotaRecord = (calData.quotas || []).find(
+          q => calIso(q.week_start) === monday
+        );
+
+        const quota = quotaRecord
+          ? Number(quotaRecord.amount)
+          : null;
+
+        const plan = full.reduce(
+          (sum, item) => sum + Number(item.amount), 0
+        );
+
+        const funded = full.reduce(
+          (sum, item) => sum + Number(item.funded), 0
+        );
+
+        const actual = full
+          .filter(item => item.confirmed_at)
+          .reduce(
+            (sum, item) => sum + Number(item.actual), 0
+          );
+
+        const confirmed =
+          full.length > 0 &&
+          full.every(item => item.confirmed_at);
+
+        const section = calEl(
+          "section",
+          `calendar-week ${
+            index % 2
+              ? "calendar-week-green"
+              : "calendar-week-orange"
+          }`
+        );
+
+        const bar = calEl("div", "calendar-week-bar");
+
+        const title = calButton(
+          `${calExpanded.has(index) ? "▾" : "▸"} ` +
+          `Тиждень ${index + 1} · ${week.label}`,
+          () => {
+            if (calExpanded.has(index)) {
+              calExpanded.delete(index);
+            } else {
+              calExpanded.add(index);
+            }
+
+            calRender();
+          }
+        );
+
+        title.classList.add("calendar-week-toggle");
+        bar.append(title);
+
+        bar.append(
+          calEl("span", "", `План ${calMoney(plan)}`)
+        );
+
+        const quotaWrap = calEl(
+          "label",
+          "calendar-quota-label"
+        );
+
+        quotaWrap.append(calEl("span", "", "Квота"));
+
+        const quotaInput = calEl(
+          "input",
+          "calendar-quota-input"
+        );
+
+        quotaInput.type = "number";
+        quotaInput.min = "0";
+        quotaInput.step = "0.01";
+        quotaInput.placeholder = "Ввести квоту";
+        quotaInput.value = quota === null
+          ? ""
+          : quota.toFixed(2);
+
+        quotaInput.disabled = !calCanWrite() || confirmed;
+
+        quotaInput.addEventListener("change", async () => {
+          if (!calValid(quotaInput.value)) {
+            alert("Некоректна квота");
+            return;
+          }
+
+          try {
+            await calRequest(
+              `/api/calendar/quota/${monday}`,
+              {
+                method: "PUT",
+                body: JSON.stringify({
+                  amount: quotaInput.value
+                })
+              }
+            );
+
+            await calLoad();
+          } catch (error) {
+            alert(error.message);
+            calRender();
+          }
         });
 
-        calendarRender();
+        quotaWrap.append(quotaInput);
+        bar.append(quotaWrap);
+
+        const gap = quota === null
+          ? 0
+          : Math.max(0, plan - quota);
+
+        bar.append(
+          calEl(
+            "span",
+            gap ? "calendar-debt" : "calendar-quiet",
+            quota === null
+              ? "Квоту не задано"
+              : `Понад квоту: ${calMoney(gap)}`
+          )
+        );
+
+        if (confirmed) {
+          bar.append(
+            calEl(
+              "span",
+              "calendar-tag calendar-allow",
+              "Факт підтверджено"
+            )
+          );
+        }
+
+        if (calCanWrite() && full.length && !confirmed) {
+          bar.append(
+            calButton(
+              "Розподілити квоту",
+              async () => {
+                try {
+                  await calRequest(
+                    `/api/calendar/week/${monday}/allocate`,
+                    { method: "POST" }
+                  );
+
+                  await calLoad();
+                } catch (error) {
+                  alert(error.message);
+                }
+              },
+              quota === null
+            )
+          );
+
+          bar.append(
+            calButton(
+              "Фактичні оплати",
+              async () => {
+                if (!confirm(
+                  `Підтвердити фактичні оплати за тиждень ` +
+                  `${week.label}? Після цього редагування заблокується.`
+                )) return;
+
+                const payments = full.map(item => ({
+                  id: item.id,
+                  actual: calActualDraft.get(String(item.id)) ??
+                    Number(item.funded).toFixed(2)
+                }));
+
+                if (
+                  payments.some(p => !calValid(p.actual))
+                ) {
+                  alert("Некоректна фактична сума");
+                  return;
+                }
+
+                try {
+                  await calRequest(
+                    `/api/calendar/week/${monday}/confirm`,
+                    {
+                      method: "POST",
+                      body: JSON.stringify({ payments })
+                    }
+                  );
+
+                  await calLoad();
+                } catch (error) {
+                  alert(error.message);
+                }
+              },
+              !calWeekFinished(monday)
+            )
+          );
+        }
+
+        section.append(bar);
+
+        if (calExpanded.has(index)) {
+          const body = calEl(
+            "div",
+            "calendar-week-body"
+          );
+
+          const movedTotal = full
+            .filter(item => item.parent_id)
+            .reduce(
+              (sum, item) => sum + Number(item.amount), 0
+            );
+
+          body.append(
+            calEl(
+              "div",
+              "calendar-counters",
+              `За квотою: ${calMoney(funded)} · ` +
+              `Факт: ${calMoney(actual)} · ` +
+              `Перенесені платежі: ${calMoney(movedTotal)}`
+            )
+          );
+
+          for (const day of dates) {
+            const dayItems = all.filter(
+              item => calIso(item.due_date) === day
+            );
+
+            const detail = calEl("div", "calendar-day");
+
+            const label = new Date(`${day}T00:00:00Z`)
+              .toLocaleDateString("uk-UA", {
+                timeZone: "UTC",
+                weekday: "long",
+                day: "2-digit",
+                month: "2-digit"
+              });
+
+            const dayTotal = dayItems.reduce(
+              (sum, item) => sum + Number(item.amount), 0
+            );
+
+            detail.append(
+              calEl(
+                "h3",
+                "",
+                `${label} · ${calMoney(dayTotal)}`
+              )
+            );
+
+            if (dayItems.length) {
+              calRows(detail, dayItems, confirmed);
+            } else {
+              detail.append(
+                calEl(
+                  "p",
+                  "calendar-empty",
+                  "Платежів немає"
+                )
+              );
+            }
+
+            body.append(detail);
+          }
+
+          section.append(body);
+        }
+
+        root.append(section);
+      }
+
+      cal("calendarCount").textContent =
+        `Платежів у вибраному місяці: ${shown}`;
+
+      if (!weeks.length) {
+        root.append(
+          calEl(
+            "p",
+            "calendar-empty",
+            "Виберіть місяць."
+          )
+        );
+      }
+    }
+
+    function calOpenMove(item) {
+      calMovingId = item.id;
+
+      cal("calendarMoveInfo").textContent =
+        `${item.tt_code || ""} · ${item.contract_id} · ` +
+        `${item.form.toUpperCase()} · ${calMoney(item.amount)}. ` +
+        calItemNote(item);
+
+      cal("calendarMoveAmount").value =
+        Number(item.amount).toFixed(2);
+
+      cal("calendarMoveAmount").max =
+        Number(item.amount);
+
+      cal("calendarMoveDate").value =
+        calIso(item.due_date);
+
+      cal("calendarMoveDialog").hidden = false;
+    }
+
+    function calCloseMove() {
+      cal("calendarMoveDialog").hidden = true;
+      calMovingId = null;
+    }
+
+    cal("calendarMoveClose")
+      .addEventListener("click", calCloseMove);
+
+    cal("calendarMoveCancel")
+      .addEventListener("click", calCloseMove);
+
+    cal("calendarMoveDialog")
+      .querySelector("[data-calendar-close]")
+      .addEventListener("click", calCloseMove);
+
+    cal("calendarMoveForm").addEventListener(
+      "submit",
+      async event => {
+        event.preventDefault();
+
+        try {
+          await calRequest(
+            `/api/calendar/items/${calMovingId}/move`,
+            {
+              method: "POST",
+              body: JSON.stringify({
+                amount: cal("calendarMoveAmount").value,
+                date: cal("calendarMoveDate").value
+              })
+            }
+          );
+
+          calCloseMove();
+          await calLoad();
+        } catch (error) {
+          alert(error.message);
+        }
       }
     );
 
-    document.querySelector("#calendarCollapseAllBtn").addEventListener(
+    cal("openCalendarBtn").addEventListener(
+      "click",
+      async () => {
+        [
+          "moduleHome",
+          "registryModule",
+          "usersModule",
+          "budgetModule"
+        ].forEach(id => {
+          cal(id).hidden = true;
+        });
+
+        cal("calendarModule").hidden = false;
+        cal("calendarMonth").value ||= budgetUserMonth();
+
+        await calLoad();
+      }
+    );
+
+    cal("backFromCalendarBtn").addEventListener(
       "click",
       () => {
-        calendarExpandedWeeks.clear();
-        calendarRender();
+        cal("calendarModule").hidden = true;
+        cal("moduleHome").hidden = false;
+      }
+    );
+
+    cal("calendarMonth").addEventListener(
+      "change",
+      () => {
+        calExpanded.clear();
+        calLoad();
+      }
+    );
+
+    cal("calendarSearch").addEventListener(
+      "input",
+      calRender
+    );
+
+    cal("calendarRefresh").addEventListener(
+      "click",
+      calLoad
+    );
+
+    cal("calendarInit").addEventListener(
+      "click",
+      async () => {
+        try {
+          const result = await calRequest(
+            `/api/calendar/${cal("calendarMonth").value}/initialize`,
+            { method: "POST" }
+          );
+
+          await calLoad();
+
+          calSetMessage(
+            `Додано платежів: ${result.added}. ` +
+            "Існуючі перенесення та факти не змінені."
+          );
+        } catch (error) {
+          calSetMessage(error.message, true);
+        }
+      }
+    );
+
+    cal("calendarExpand").addEventListener(
+      "click",
+      () => {
+        (calData.weeks || []).forEach((_, index) => {
+          calExpanded.add(index);
+        });
+
+        calRender();
+      }
+    );
+
+    cal("calendarCollapse").addEventListener(
+      "click",
+      () => {
+        calExpanded.clear();
+        calRender();
       }
     );
     
