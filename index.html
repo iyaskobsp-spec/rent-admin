@@ -2997,12 +2997,12 @@
         .filter(item => item.parent_id)
         .reduce((sum, item) => sum + Number(item.amount), 0);
 
-      const funded = items.reduce(
-        (sum, item) => sum + Number(item.funded), 0
+      const quota = (calData.quotas || []).find(
+        row => calIso(row.week_start) === monday
       );
 
-      const quotaRecord = (calData.quotas || []).find(
-        item => calIso(item.week_start) === monday
+      const approval = (calData.approvals || []).find(
+        row => row.week === monday
       );
 
       return {
@@ -3013,153 +3013,563 @@
         items,
         planned,
         moved,
-        funded,
         need: planned + moved,
-        quota: quotaRecord ? Number(quotaRecord.amount) : null,
-        expanded: calExpanded.has(index),
-        confirmed: items.length > 0 &&
-          items.every(item => Boolean(item.confirmed_at))
+        funded: items.reduce(
+          (sum, item) => sum + Number(item.funded), 0
+        ),
+        actual: items
+          .filter(item => item.confirmed_at)
+          .reduce((sum, item) => sum + Number(item.actual), 0),
+        quota: quota ? Number(quota.amount) : null,
+        approval,
+        expanded: calExpanded.has(index)
       };
     }
 
-    function calRenderPayment(item) {
-      const box = calEl("div", "calendar-payment-entry");
+    function calNextWeekStart() {
+      const parts = new Intl.DateTimeFormat("en-CA", {
+        timeZone: "Europe/Kyiv",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit"
+      }).formatToParts(new Date());
 
-      box.append(
-        calEl("strong", "calendar-payment-amount", calFmt(item.amount))
+      const year = parts.find(p => p.type === "year").value;
+      const month = parts.find(p => p.type === "month").value;
+      const day = parts.find(p => p.type === "day").value;
+
+      const today = `${year}-${month}-${day}`;
+      const monday = new Date(`${calMonday(today)}T00:00:00Z`);
+
+      monday.setUTCDate(monday.getUTCDate() + 7);
+
+      return monday.toISOString().slice(0, 10);
+    }
+
+    function calNextWeekDates() {
+      const monday = calNextWeekStart();
+      const start = new Date(`${monday}T00:00:00Z`);
+
+      return Array.from({ length: 7 }, (_, index) => {
+        const date = new Date(start);
+        date.setUTCDate(date.getUTCDate() + index);
+        return date.toISOString().slice(0, 10);
+      });
+    }
+
+    function calMakeButton(label, callback, className = "") {
+      const button = calButton(label, callback);
+
+      if (className) button.classList.add(className);
+
+      return button;
+    }
+
+    function calWeeklyRender() {
+      const host = cal("calendarWeeklyTable");
+      const summary = cal("calendarWeeklySummary");
+
+      host.replaceChildren();
+      summary.replaceChildren();
+
+      const dates = calNextWeekDates();
+      const monday = dates[0];
+
+      const all = (calData.items || []).filter(item =>
+        dates.includes(calIso(item.due_date)) &&
+        Number(item.amount) > 0
       );
 
-      if (item.parent_id) {
-        box.append(
-          calEl("small", "calendar-tag calendar-moved", "Перенесено")
-        );
-      }
+      const budgetAmount = all
+        .filter(item => !item.parent_id)
+        .reduce((sum, item) => sum + Number(item.amount), 0);
 
-      box.append(
-        calEl(
-          "small",
-          "calendar-payment-date",
-          calIso(item.due_date).split("-").reverse().join(".")
-        )
+      const movedAmount = all
+        .filter(item => item.parent_id)
+        .reduce((sum, item) => sum + Number(item.amount), 0);
+
+      const need = budgetAmount + movedAmount;
+
+      const quotaRecord = (calData.quotas || []).find(
+        item => calIso(item.week_start) === monday
       );
 
-      if (item.confirmed_at) {
-        box.append(
-          calEl(
-            "small",
-            "calendar-paid",
-            `Оплачено: ${calMoney(item.actual)}`
-          )
+      const quota = quotaRecord
+        ? Number(quotaRecord.amount)
+        : null;
+
+      const approval = (calData.approvals || []).find(
+        item => item.week === monday
+      );
+
+      function summaryCard(label, value) {
+        const div = calEl("div");
+
+        div.append(
+          calEl("span", "", label),
+          calEl("strong", "", value)
         );
 
-        const debt = Math.max(
-          0,
-          calCents(item.amount) - calCents(item.actual)
-        ) / 100;
-
-        if (debt > 0) {
-          box.append(
-            calEl("small", "calendar-debt", `Борг: ${calMoney(debt)}`)
-          );
-        }
-
-        return box;
+        summary.append(div);
+        return div;
       }
 
-      const funding = calEl("label", "calendar-payment-input");
-      funding.append(calEl("small", "", "За квотою"));
+      summaryCard(
+        "Потреба: бюджет + перенесені",
+        calMoney(need)
+      );
 
-      const fundingInput = calEl("input", "calendar-money-input");
-      fundingInput.type = "number";
-      fundingInput.min = "0";
-      fundingInput.step = "0.01";
-      fundingInput.value = Number(item.funded).toFixed(2);
-      fundingInput.disabled = !calCanWrite();
+      const quotaCard = summaryCard(
+        "Квота Ф1 + Ф2",
+        ""
+      );
 
-      fundingInput.addEventListener("change", async () => {
-        if (
-          !calValid(fundingInput.value) ||
-          calCents(fundingInput.value) > calCents(item.amount)
-        ) {
-          alert("Некоректна сума розподілу");
-          calRender();
+      const quotaInput = calEl("input", "calendar-summary-input");
+      quotaInput.type = "number";
+      quotaInput.min = "0";
+      quotaInput.step = "0.01";
+      quotaInput.placeholder = "Ввести квоту";
+      quotaInput.value = quota === null
+        ? ""
+        : quota.toFixed(2);
+
+      quotaInput.disabled = !calCanWrite() || Boolean(approval);
+
+      quotaInput.addEventListener("change", async () => {
+        if (!calValid(quotaInput.value)) {
+          alert("Некоректна квота");
           return;
         }
 
         try {
           await calRequest(
-            `/api/calendar/items/${item.id}/funded`,
+            `/api/calendar/quota/${monday}`,
             {
-              method: "PATCH",
-              body: JSON.stringify({ amount: fundingInput.value })
+              method: "PUT",
+              body: JSON.stringify({
+                amount: quotaInput.value
+              })
             }
           );
 
           await calLoad();
         } catch (error) {
           alert(error.message);
-          calRender();
         }
       });
 
-      funding.append(fundingInput);
-      box.append(funding);
+      quotaCard.append(quotaInput);
 
-      if (calWeekFinished(calMonday(calIso(item.due_date)))) {
-        const fact = calEl("label", "calendar-payment-input");
-        fact.append(calEl("small", "", "Факт"));
+      summaryCard(
+        "Перенесені з інших тижнів",
+        calMoney(movedAmount)
+      );
 
-        const factInput = calEl("input", "calendar-money-input");
-        factInput.type = "number";
-        factInput.min = "0";
-        factInput.step = "0.01";
-        factInput.disabled = !calCanWrite();
+      summaryCard(
+        "Перекіс / залишок квоти",
+        quota === null
+          ? "Квоту не внесено"
+          : calMoney(quota - need)
+      );
 
-        const key = String(item.id);
+      const confirmButton = cal("calendarConfirmPlan");
 
-        factInput.value = calActualDraft.has(key)
-          ? calActualDraft.get(key)
-          : Number(item.funded).toFixed(2);
+      confirmButton.hidden = Boolean(approval);
+      confirmButton.disabled =
+        !calCanWrite() ||
+        quota === null ||
+        !all.length;
 
-        factInput.addEventListener("input", () => {
-          calActualDraft.set(key, factInput.value);
-        });
-
-        fact.append(factInput);
-        box.append(fact);
-      }
-
-      if (calMovable(item) && calCanWrite()) {
-        box.append(
-          calButton("Перенести", () => calOpenMove(item))
+      if (approval) {
+        const message = calEl(
+          "span",
+          "calendar-approved-label",
+          "План наступного тижня підтверджено"
         );
+
+        confirmButton.after(message);
       }
 
-      return box;
-    }
+      const tableWrap = calEl(
+        "div",
+        "budget-table-wrap calendar-budget-wrap"
+      );
 
-    function calRender() {
-      const month = cal("calendarMonth").value;
-      const weeks = calData.weeks || [];
-      const weekData = weeks.map(
-        (week, index) => calWeekData(month, week, index)
+      const table = calEl("table", "calendar-budget-table");
+      table.id = "calendarWeeklyBudgetTable";
+
+      const thead = calEl("thead");
+      const tbody = calEl("tbody");
+      const tfoot = calEl("tfoot");
+
+      const head = calEl("tr");
+
+      [
+        "ТТ",
+        "ID договору",
+        "Об'єкт / область / адреса",
+        "Строк оплати",
+        "Ф1 бюджет",
+        "Ф2 бюджет",
+        "Ф1 на тиждень",
+        "Ф2 на тиждень",
+        "Коментар щодо оплати",
+        "Дія"
+      ].forEach(label => {
+        const th = calEl("th", "", label);
+
+        if (
+          [
+            "ТТ",
+            "ID договору",
+            "Ф1 бюджет",
+            "Ф2 бюджет",
+            "Ф1 на тиждень",
+            "Ф2 на тиждень"
+          ].includes(label)
+        ) {
+          th.classList.add("calendar-sort-heading");
+        }
+
+        head.append(th);
+      });
+
+      thead.append(head);
+
+      const itemsByContract = new Map();
+
+      all.forEach(item => {
+        if (!itemsByContract.has(item.contract_id)) {
+          itemsByContract.set(item.contract_id, []);
+        }
+
+        itemsByContract.get(item.contract_id).push(item);
+      });
+
+      const linesByContract = new Map(
+        (calData.lines || []).map(line =>
+          [line.contract_id, line]
+        )
+      );
+
+      const records = [...itemsByContract.entries()].map(
+        ([contractId, payments]) => {
+          const line = linesByContract.get(contractId) ||
+            payments[0];
+
+          const sumForm = form => payments
+            .filter(item => item.form === form)
+            .reduce((sum, item) => sum + Number(item.amount), 0);
+
+          return {
+            id: contractId,
+            line,
+            payments,
+            f1: sumForm("f1"),
+            f2: sumForm("f2")
+          };
+        }
       );
 
       const query = cal("calendarSearch").value
         .trim().toLocaleLowerCase("uk");
 
-      const budgetLines = calData.lines || [];
-
-      const lines = budgetLines.filter(line =>
+      const filtered = records.filter(record =>
         !query ||
         [
-          line.tt_code,
-          line.contract_id,
-          line.object_name,
-          line.region,
-          line.address,
-          line.payment_due_text
+          record.id,
+          record.line.tt_code,
+          record.line.object_name,
+          record.line.region,
+          record.line.address
         ].join(" ").toLocaleLowerCase("uk").includes(query)
+      );
+
+      if (!window.calWeeklySort) {
+        window.calWeeklySort = {
+          field: "tt_code",
+          dir: 1
+        };
+      }
+
+      const sort = window.calWeeklySort;
+
+      const sortMap = {
+        "ТТ": "tt_code",
+        "ID договору": "id",
+        "Ф1 бюджет": "budget_f1",
+        "Ф2 бюджет": "budget_f2",
+        "Ф1 на тиждень": "f1",
+        "Ф2 на тиждень": "f2"
+      };
+
+      [...head.children].forEach(th => {
+        const field = sortMap[th.textContent];
+
+        if (!field) return;
+
+        th.addEventListener("click", () => {
+          sort.dir = sort.field === field
+            ? -sort.dir
+            : 1;
+
+          sort.field = field;
+          calWeeklyRender();
+        });
+
+        th.textContent += sort.field === field
+          ? sort.dir === 1 ? " ↑" : " ↓"
+          : " ↕";
+      });
+
+      filtered.sort((a, b) => {
+        const field = sort.field;
+
+        const left = field === "id"
+          ? a.id
+          : field === "f1" || field === "f2"
+            ? a[field]
+            : a.line[field];
+
+        const right = field === "id"
+          ? b.id
+          : field === "f1" || field === "f2"
+            ? b[field]
+            : b.line[field];
+
+        const numeric = [
+          "f1", "f2", "budget_f1", "budget_f2"
+        ].includes(field);
+
+        return sort.dir * (
+          numeric
+            ? Number(left || 0) - Number(right || 0)
+            : String(left || "").localeCompare(
+                String(right || ""),
+                "uk",
+                { numeric: true }
+              )
+        );
+      });
+
+      for (const record of filtered) {
+        const { line, payments } = record;
+        const tr = calEl("tr");
+
+        const fields = [
+          line.tt_code || "—",
+          record.id,
+          [
+            line.object_name,
+            line.region,
+            line.address
+          ].filter(Boolean).join(" · "),
+          line.payment_due_text || "—",
+          calFmt(line.budget_f1),
+          calFmt(line.budget_f2),
+          calFmt(record.f1),
+          calFmt(record.f2),
+          line.budget_comment ||
+            line.critical_terms?.["Примітка"] ||
+            "—"
+        ];
+
+        fields.forEach((value, index) => {
+          const td = calEl("td", "", value);
+
+          if ([4, 5, 6, 7].includes(index)) {
+            td.classList.add("budget-money");
+          }
+
+          if (payments.some(item => item.parent_id)) {
+            td.classList.add("calendar-has-transfer");
+          }
+
+          tr.append(td);
+        });
+
+        const actions = calEl("td", "calendar-row-actions");
+
+        if (calCanWrite() && !approval) {
+          actions.append(
+            calMakeButton("Редагувати", () => {
+              calOpenWeeklyEditor(record, monday);
+            }, "calendar-edit-btn")
+          );
+        }
+
+        tr.append(actions);
+        tbody.append(tr);
+      }
+
+      const foot = calEl("tr");
+      const label = calEl("td", "", "РАЗОМ");
+      label.colSpan = 4;
+      foot.append(label);
+
+      const totals = [
+        "budget_f1",
+        "budget_f2"
+      ].map(field =>
+        filtered.reduce(
+          (sum, record) =>
+            sum + Number(record.line[field] || 0),
+          0
+        )
+      );
+
+      totals.push(
+        filtered.reduce((sum, record) => sum + record.f1, 0),
+        filtered.reduce((sum, record) => sum + record.f2, 0)
+      );
+
+      totals.forEach(amount =>
+        foot.append(
+          calEl("td", "budget-money", calFmt(amount))
+        )
+      );
+
+      const empty = calEl("td");
+      empty.colSpan = 2;
+      foot.append(empty);
+
+      tfoot.append(foot);
+      table.append(thead, tbody, tfoot);
+      tableWrap.append(table);
+      host.append(tableWrap);
+
+      cal("calendarCount").textContent =
+        `Договорів до оплати: ${filtered.length}`;
+
+      confirmButton.onclick = async () => {
+        if (!confirm(
+          "Підтвердити розподіл платежів на наступний тиждень?"
+        )) return;
+
+        try {
+          await calRequest(
+            `/api/calendar/week/${monday}/approve-plan`,
+            { method: "POST" }
+          );
+
+          await calLoad();
+        } catch (error) {
+          alert(error.message);
+        }
+      };
+    }
+
+    function calOpenWeeklyEditor(record, monday) {
+      const { payments, id } = record;
+
+      const dialog = document.createElement("div");
+      dialog.className = "calendar-quick-overlay";
+
+      const card = calEl("section", "calendar-quick-dialog");
+
+      card.append(
+        calEl("h2", "", `Редагування платежів · ${id}`)
+      );
+
+      card.append(
+        calEl(
+          "p",
+          "calendar-quick-note",
+          "Платежі взято з бюджету. Змініть тільки ті, " +
+          "для яких потрібно скоригувати розподіл чи дату."
+        )
+      );
+
+      const entries = [];
+
+      for (const payment of payments) {
+        const row = calEl("div", "calendar-quick-row");
+
+        row.append(
+          calEl(
+            "strong",
+            "",
+            `${payment.form.toUpperCase()} · ${calMoney(payment.amount)}`
+          )
+        );
+
+        const label = calEl("label");
+        label.textContent = "До оплати за квотою";
+
+        const input = calEl("input");
+        input.type = "number";
+        input.min = "0";
+        input.step = "0.01";
+        input.value = Number(payment.funded).toFixed(2);
+
+        label.append(input);
+        row.append(label);
+
+        if (calMovable(payment)) {
+          row.append(
+            calMakeButton("Перенести всю / частину", () => {
+              dialog.remove();
+              calOpenMove(payment);
+            })
+          );
+        }
+
+        card.append(row);
+        entries.push({ payment, input });
+      }
+
+      const actions = calEl("div", "calendar-quick-actions");
+
+      actions.append(
+        calMakeButton("Скасувати", () => dialog.remove())
+      );
+
+      actions.append(
+        calMakeButton("Зберегти", async () => {
+          const changed = entries.filter(({ payment, input }) =>
+            calCents(input.value) !== calCents(payment.funded)
+          );
+
+          if (changed.some(({ payment, input }) =>
+            !calValid(input.value) ||
+            calCents(input.value) > calCents(payment.amount)
+          )) {
+            alert("Перевірте суми");
+            return;
+          }
+
+          try {
+            for (const { payment, input } of changed) {
+              await calRequest(
+                `/api/calendar/items/${payment.id}/funded`,
+                {
+                  method: "PATCH",
+                  body: JSON.stringify({
+                    amount: input.value
+                  })
+                }
+              );
+            }
+
+            dialog.remove();
+            await calLoad();
+          } catch (error) {
+            alert(error.message);
+          }
+        })
+      );
+
+      card.append(actions);
+      dialog.append(card);
+      document.body.append(dialog);
+    }
+
+    function calOverviewRender() {
+      const month = cal("calendarMonth").value;
+      const weeks = calData.weeks || [];
+
+      const configurations = weeks.map(
+        (week, index) => calWeekData(month, week, index)
       );
 
       const root = cal("calendarWeeks");
@@ -3180,198 +3590,73 @@
       const first = calEl("tr");
       const second = calEl("tr");
 
-      const fixedColumns = [
+      [
         ["ТТ", "budget-tt"],
-        ["ID", "budget-id"],
-        ["Область / об'єкт / адреса", "budget-address"],
-        ["Строк оплати", "budget-due"]
-      ];
-
-      fixedColumns.forEach(([label, className]) => {
-        const th = calEl("th", className, label);
+        ["ID договору", "budget-id"],
+        ["Об'єкт / адреса", "budget-address"],
+        ["Ф1 бюджет", "budget-money"],
+        ["Ф2 бюджет", "budget-money"]
+      ].forEach(([label, cls]) => {
+        const th = calEl("th", cls, label);
         th.rowSpan = 2;
         first.append(th);
       });
 
-      const amountHeading = calEl(
-        "th",
-        "calendar-budget-amounts",
-        "Суми договору / бюджету"
-      );
-      amountHeading.colSpan = 4;
-      first.append(amountHeading);
-
-      [
-        "Ф1 дог.",
-        "Ф2 дог.",
-        "Ф1 бюджет",
-        "Ф2 бюджет"
-      ].forEach(label => {
-        second.append(calEl("th", "budget-amount", label));
-      });
-
-      const totalHeading = calEl(
-        "th",
-        "budget-amount",
-        "Всього бюджет"
-      );
-      totalHeading.rowSpan = 2;
-      first.append(totalHeading);
-
-      weekData.forEach(info => {
-        const color = info.index % 2
+      for (const info of configurations) {
+        const cls = info.index % 2
           ? "budget-week-green"
           : "budget-week-orange";
 
-        const group = calEl("th", `calendar-week-head ${color}`);
-        group.colSpan = info.expanded ? info.dates.length : 2;
+        const th = calEl("th", cls);
+        th.colSpan = info.expanded
+          ? info.dates.length
+          : 2;
 
-        const toggle = calButton(
-          `${info.expanded ? "▾" : "▸"} Тиждень ${info.index + 1}: ${info.week.label}`,
-          () => {
-            if (info.expanded) {
-              calExpanded.delete(info.index);
-            } else {
-              calExpanded.add(info.index);
-            }
-
-            calRender();
-          }
-        );
-
-        toggle.classList.add("calendar-week-toggle");
-        group.append(toggle);
-
-        const summary = calEl("div", "calendar-week-need");
-
-        summary.append(
-          calEl("span", "", `План: ${calMoney(info.planned)}`),
-          calEl("span", "", `Перенесені: ${calMoney(info.moved)}`),
-          calEl("strong", "", `Потреба: ${calMoney(info.need)}`)
-        );
-
-        group.append(summary);
-
-        const controls = calEl("div", "calendar-week-controls");
-        controls.append(
-          calEl("span", "", "Квота Ф1 + Ф2")
-        );
-
-        const quotaInput = calEl("input", "calendar-quota-input");
-        quotaInput.type = "number";
-        quotaInput.min = "0";
-        quotaInput.step = "0.01";
-        quotaInput.placeholder = "Ввести квоту";
-        quotaInput.value = info.quota === null
-          ? ""
-          : info.quota.toFixed(2);
-        quotaInput.disabled = !calCanWrite() || info.confirmed;
-
-        quotaInput.addEventListener("change", async () => {
-          if (!calValid(quotaInput.value)) {
-            alert("Некоректна квота");
-            calRender();
-            return;
-          }
-
-          try {
-            await calRequest(
-              `/api/calendar/quota/${info.monday}`,
-              {
-                method: "PUT",
-                body: JSON.stringify({ amount: quotaInput.value })
+        th.append(
+          calMakeButton(
+            `${info.expanded ? "▾" : "▸"} ${info.week.label}`,
+            () => {
+              if (info.expanded) {
+                calExpanded.delete(info.index);
+              } else {
+                calExpanded.add(info.index);
               }
-            );
 
-            await calLoad();
-          } catch (error) {
-            alert(error.message);
-            calRender();
-          }
-        });
+              calOverviewRender();
+            }
+          )
+        );
 
-        controls.append(quotaInput);
+        const status = calEl("div", "calendar-overview-status");
+
+        status.append(
+          calEl(
+            "span",
+            "",
+            `Прогноз: ${calMoney(info.need)}`
+          )
+        );
 
         if (info.quota !== null) {
-          controls.append(
-            calEl(
-              "strong",
-              info.quota < info.need
-                ? "calendar-debt"
-                : "calendar-ok",
-              `Різниця: ${calMoney(info.quota - info.need)}`
-            )
+          status.append(
+            calEl("span", "", `Квота: ${calMoney(info.quota)}`)
           );
         }
 
-        if (!info.confirmed && calCanWrite() && info.items.length) {
-          controls.append(
-            calButton(
-              "Розподілити квоту",
-              async () => {
-                try {
-                  await calRequest(
-                    `/api/calendar/week/${info.monday}/allocate`,
-                    { method: "POST" }
-                  );
-
-                  await calLoad();
-                } catch (error) {
-                  alert(error.message);
-                }
-              },
-              info.quota === null
-            )
+        if (info.items.some(item => item.confirmed_at)) {
+          status.append(
+            calEl("strong", "", `Факт: ${calMoney(info.actual)}`)
           );
-
-          controls.append(
-            calButton(
-              "Фактичні оплати",
-              async () => {
-                if (!confirm(
-                  `Підтвердити фактичні оплати за ${info.week.label}?`
-                )) return;
-
-                const payments = info.items.map(item => ({
-                  id: item.id,
-                  actual: calActualDraft.get(String(item.id)) ??
-                    Number(item.funded).toFixed(2)
-                }));
-
-                if (payments.some(item => !calValid(item.actual))) {
-                  alert("Некоректна фактична сума");
-                  return;
-                }
-
-                try {
-                  await calRequest(
-                    `/api/calendar/week/${info.monday}/confirm`,
-                    {
-                      method: "POST",
-                      body: JSON.stringify({ payments })
-                    }
-                  );
-
-                  await calLoad();
-                } catch (error) {
-                  alert(error.message);
-                }
-              },
-              !calWeekFinished(info.monday)
-            )
+        } else if (info.approval) {
+          status.append(
+            calEl("strong", "", `За календарем: ${calMoney(info.funded)}`)
           );
         }
 
-        if (info.confirmed) {
-          controls.append(
-            calEl("strong", "calendar-ok", "Факт підтверджено")
-          );
-        }
+        th.append(status);
+        first.append(th);
 
-        group.append(controls);
-        first.append(group);
-
-        const labels = info.expanded
+        const headings = info.expanded
           ? info.dates.map(date =>
               new Date(`${date}T00:00:00Z`)
                 .toLocaleDateString("uk-UA", {
@@ -3382,184 +3667,150 @@
             )
           : ["Ф1", "Ф2"];
 
-        labels.forEach(label => {
-          second.append(calEl("th", color, label));
-        });
-      });
-
-      const commentHeading = calEl(
-        "th",
-        "budget-comment",
-        "Коментар по оплаті / перенесенню"
-      );
-      commentHeading.rowSpan = 2;
-      first.append(commentHeading);
-
-      thead.append(first, second);
-
-      function appendMoney(tr, amount, className = "") {
-        tr.append(
-          calEl("td", `budget-money ${className}`, calFmt(amount))
+        headings.forEach(label =>
+          second.append(calEl("th", cls, label))
         );
       }
 
-      for (const line of lines) {
+      const comment = calEl("th", "budget-comment", "Коментар");
+      comment.rowSpan = 2;
+      first.append(comment);
+
+      thead.append(first, second);
+
+      const lines = calData.lines || [];
+      const search = cal("calendarSearch").value
+        .trim().toLocaleLowerCase("uk");
+
+      const visible = lines.filter(line =>
+        !search ||
+        [
+          line.contract_id,
+          line.tt_code,
+          line.object_name,
+          line.address
+        ].join(" ").toLocaleLowerCase("uk").includes(search)
+      );
+
+      for (const line of visible) {
         const tr = calEl("tr");
 
-        tr.append(
-          calEl("td", "budget-tt", line.tt_code || "—"),
-          calEl("td", "budget-id", line.contract_id)
-        );
-
-        const address = calEl("td", "budget-address");
-
-        address.append(
-          calEl(
-            "strong",
-            "",
-            line.object_name || "—"
-          ),
-          calEl(
-            "small",
-            "calendar-object-address",
-            [line.region, line.address].filter(Boolean).join(" · ")
+        [
+          line.tt_code || "—",
+          line.contract_id,
+          [line.object_name, line.address].filter(Boolean).join(" · "),
+          calFmt(line.budget_f1),
+          calFmt(line.budget_f2)
+        ].forEach((value, index) =>
+          tr.append(
+            calEl("td", index > 2 ? "budget-money" : "", value)
           )
         );
 
-        tr.append(address);
+        configurations.forEach(info => {
+          const cls = info.index % 2
+            ? "budget-week-green"
+            : "budget-week-orange";
+
+          const groups = info.expanded
+            ? info.dates.map(date =>
+                info.items.filter(item =>
+                  item.contract_id === line.contract_id &&
+                  calIso(item.due_date) === date
+                )
+              )
+            : ["f1", "f2"].map(form =>
+                info.items.filter(item =>
+                  item.contract_id === line.contract_id &&
+                  item.form === form
+                )
+              );
+
+          groups.forEach(group => {
+            const cell = calEl("td", `budget-money ${cls}`);
+
+            const amount = group.reduce(
+              (sum, item) => sum + Number(item.amount),
+              0
+            );
+
+            cell.append(calEl("strong", "", calFmt(amount)));
+
+            const moved = group.some(item => item.parent_id);
+
+            if (moved) {
+              cell.classList.add("calendar-has-transfer");
+              cell.append(
+                calEl("small", "", "Перенесено")
+              );
+            }
+
+            const fact = group
+              .filter(item => item.confirmed_at)
+              .reduce((sum, item) => sum + Number(item.actual), 0);
+
+            if (group.some(item => item.confirmed_at)) {
+              cell.append(
+                calEl("small", "calendar-paid", `Факт: ${calFmt(fact)}`)
+              );
+            }
+
+            tr.append(cell);
+          });
+        });
 
         tr.append(
           calEl(
             "td",
-            "budget-due",
-            line.payment_due_text || "Не визначено"
+            "budget-comment",
+            line.budget_comment || "—"
           )
         );
 
-        appendMoney(tr, line.base_f1);
-        appendMoney(tr, line.base_f2);
-        appendMoney(tr, line.budget_f1);
-        appendMoney(tr, line.budget_f2);
-
-        appendMoney(
-          tr,
-          Number(line.budget_f1) + Number(line.budget_f2),
-          "budget-line-total"
-        );
-
-        weekData.forEach(info => {
-          const color = info.index % 2
-            ? "budget-week-green"
-            : "budget-week-orange";
-
-          const rowItems = info.items.filter(item =>
-            item.contract_id === line.contract_id
-          );
-
-          const groups = info.expanded
-            ? info.dates.map(date => rowItems.filter(item =>
-                calIso(item.due_date) === date
-              ))
-            : ["f1", "f2"].map(form => rowItems.filter(item =>
-                item.form === form
-              ));
-
-          groups.forEach(payments => {
-            const td = calEl(
-              "td",
-              `calendar-week-payment ${color}`
-            );
-
-            if (payments.length) {
-              payments.forEach(item => {
-                td.append(calRenderPayment(item));
-              });
-            } else {
-              td.textContent = "—";
-            }
-
-            tr.append(td);
-          });
-        });
-
-        const comment = calEl("td", "budget-comment");
-
-        const reference = {
-          payment_due_text: line.payment_due_text,
-          payment_terms: line.payment_terms,
-          critical_terms: line.critical_terms,
-          budget_comment: line.budget_comment
-        };
-
-        const movable = calMovable(reference);
-
-        comment.append(
-          calEl(
-            "span",
-            movable
-              ? "calendar-tag calendar-allow"
-              : "calendar-tag calendar-must",
-            movable ? "Можливе перенесення" : "Обов'язковий"
-          )
-        );
-
-        comment.append(
-          calEl(
-            "div",
-            "calendar-comment-text",
-            calItemNote(reference)
-          )
-        );
-
-        tr.append(comment);
         tbody.append(tr);
       }
 
       const totals = calEl("tr");
       const totalLabel = calEl("td", "", "РАЗОМ");
-      totalLabel.colSpan = 4;
+      totalLabel.colSpan = 3;
       totals.append(totalLabel);
 
-      for (const field of [
-        "base_f1", "base_f2", "budget_f1", "budget_f2"
-      ]) {
-        appendMoney(
-          totals,
-          lines.reduce(
-            (sum, line) => sum + Number(line[field] || 0), 0
+      ["budget_f1", "budget_f2"].forEach(field =>
+        totals.append(
+          calEl(
+            "td",
+            "budget-money",
+            calFmt(visible.reduce(
+              (sum, line) => sum + Number(line[field] || 0), 0
+            ))
           )
-        );
-      }
-
-      appendMoney(
-        totals,
-        lines.reduce(
-          (sum, line) =>
-            sum + Number(line.budget_f1 || 0) +
-            Number(line.budget_f2 || 0), 0
         )
       );
 
-      weekData.forEach(info => {
+      configurations.forEach(info => {
         const groups = info.expanded
-          ? info.dates.map(date => info.items.filter(item =>
-              calIso(item.due_date) === date
-            ))
-          : ["f1", "f2"].map(form => info.items.filter(item =>
-              item.form === form
-            ));
+          ? info.dates.map(date =>
+              info.items.filter(item =>
+                calIso(item.due_date) === date
+              )
+            )
+          : ["f1", "f2"].map(form =>
+              info.items.filter(item =>
+                item.form === form
+              )
+            );
 
-        groups.forEach(group => {
-          appendMoney(
-            totals,
-            group.reduce(
-              (sum, item) => sum + Number(item.amount), 0
-            ),
-            info.index % 2
-              ? "budget-week-green"
-              : "budget-week-orange"
-          );
-        });
+        groups.forEach(group =>
+          totals.append(
+            calEl(
+              "td",
+              "budget-money",
+              calFmt(group.reduce(
+                (sum, item) => sum + Number(item.amount), 0
+              ))
+            )
+          )
+        );
       });
 
       totals.append(calEl("td", "", ""));
@@ -3570,40 +3821,16 @@
       root.append(wrap);
 
       cal("calendarCount").textContent =
-        `Показано договорів: ${lines.length} із ${budgetLines.length}`;
+        `Договорів: ${visible.length}`;
     }
 
-    let calActiveTab = "weekly";
-
-    function calSwitchTab(tab) {
-      calActiveTab = tab;
-
-      cal("calendarWeeklyPanel").hidden = tab !== "weekly";
-      cal("calendarOverviewPanel").hidden = tab !== "overview";
-
-      cal("calendarQuotaTab").classList.toggle(
-        "is-active", tab === "weekly"
-      );
-
-      cal("calendarOverviewTab").classList.toggle(
-        "is-active", tab === "overview"
-      );
-
-      cal("calendarExpand").hidden = tab !== "overview";
-      cal("calendarCollapse").hidden = tab !== "overview";
-
-      calRender();
+    function calRender() {
+      if (calActiveTab === "weekly") {
+        calWeeklyRender();
+      } else {
+        calOverviewRender();
+      }
     }
-
-    cal("calendarQuotaTab").addEventListener(
-      "click",
-      () => calSwitchTab("weekly")
-    );
-
-    cal("calendarOverviewTab").addEventListener(
-      "click",
-      () => calSwitchTab("overview")
-    );
     
     function calOpenMove(item) {
       calMovingId = item.id;
