@@ -106,14 +106,15 @@
           </span>
           <span class="module-card-state available">Активний</span>
         </button>
-        <div class="module-card is-disabled" aria-disabled="true">
+        <button class="module-card" id="openCalendarBtn" type="button">
           <span class="module-card-icon">▦</span>
           <span class="module-card-content">
             <strong>Платіжний календар</strong>
-            <span>Тижневе навантаження, пріоритети, квоти та факт оплат</span>
-            <small>У розробці</small>
+            <span>Планові платежі, перенесення, квоти та факт оплат</span>
+            <small>Відкрити модуль →</small>
           </span>
-        </div>
+          <span class="module-card-state available">Активний</span>
+        </button>
       </div>
     </section>
 
@@ -271,6 +272,56 @@
           не перераховується.
         </p>
       </div>
+    </section>
+
+    <section id="calendarModule" hidden>
+      <button id="backFromCalendarBtn" class="back-to-modules" type="button">
+        ← До модулів
+      </button>
+
+      <h1>Платіжний календар</h1>
+      <p class="subtitle">
+        Планування платежів, квоти, перенесення та контроль фактичних оплат
+      </p>
+
+      <div class="budget-toolbar">
+        <label class="budget-month-field">
+          <span>Місяць календаря</span>
+          <input id="calendarMonth" type="month">
+        </label>
+
+        <div class="budget-toolbar-actions">
+          <button id="calendarExpandAllBtn" type="button">
+            Розгорнути всі тижні
+          </button>
+          <button id="calendarCollapseAllBtn" type="button">
+            Згорнути всі тижні
+          </button>
+        </div>
+      </div>
+
+      <div class="budget-summary">
+        <div>
+          <span>Планові платежі</span>
+          <strong id="calendarPlannedTotal">0,00</strong>
+        </div>
+        <div>
+          <span>Перенесені платежі</span>
+          <strong id="calendarMovedTotal">0,00</strong>
+        </div>
+        <div>
+          <span>Загальна квота</span>
+          <strong id="calendarQuotaTotal">0,00</strong>
+        </div>
+        <div>
+          <span>Різниця з квотою</span>
+          <strong id="calendarQuotaDifference">0,00</strong>
+        </div>
+      </div>
+
+      <div id="calendarWeeks" class="calendar-weeks"></div>
+
+      <p id="calendarMessage" class="budget-message" role="status"></p>
     </section>
     
     <section id="registryModule" hidden>
@@ -2672,6 +2723,175 @@
       }
     }
 
+    // ========================================
+    // ПЛАТІЖНИЙ КАЛЕНДАР
+    // ========================================
+
+    const calendarModule = document.querySelector("#calendarModule");
+    const calendarMonthInput = document.querySelector("#calendarMonth");
+    const calendarWeeksContainer = document.querySelector("#calendarWeeks");
+    const calendarExpandedWeeks = new Set();
+
+    const calendarMoney = new Intl.NumberFormat("uk-UA", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    });
+
+    function calendarGetWeeks(month) {
+      if (!/^\d{4}-\d{2}$/.test(month)) return [];
+
+      const [year, monthNumber] = month.split("-").map(Number);
+      const lastDay = new Date(Date.UTC(year, monthNumber, 0)).getUTCDate();
+      const weeks = [];
+
+      let day = 1;
+
+      while (day <= lastDay) {
+        const date = new Date(Date.UTC(year, monthNumber - 1, day));
+        const weekday = (date.getUTCDay() + 6) % 7;
+        const endDay = Math.min(day + 6 - weekday, lastDay);
+
+        weeks.push({
+          number: weeks.length + 1,
+          startDay: day,
+          endDay
+        });
+
+        day = endDay + 1;
+      }
+
+      return weeks;
+    }
+
+    function calendarFormatDay(year, month, day) {
+      const date = new Date(Date.UTC(year, month - 1, day));
+
+      return date.toLocaleDateString("uk-UA", {
+        timeZone: "UTC",
+        weekday: "short",
+        day: "2-digit",
+        month: "2-digit"
+      });
+    }
+
+    function calendarRender() {
+      const month = calendarMonthInput.value;
+      const weeks = calendarGetWeeks(month);
+      const [year, monthNumber] = month.split("-").map(Number);
+
+      calendarWeeksContainer.replaceChildren();
+
+      weeks.forEach(week => {
+        const section = document.createElement("section");
+        section.className = "calendar-week";
+        section.style.cssText =
+          "margin-bottom:12px;border:1px solid #dce5f0;" +
+          "border-radius:12px;background:#fff;overflow:hidden;";
+
+        const header = document.createElement("button");
+        header.type = "button";
+        header.className = "calendar-week-header";
+        header.style.cssText =
+          "display:flex;align-items:center;justify-content:space-between;" +
+          "gap:12px;width:100%;padding:16px;border:0;" +
+          "background:#eaf0f7;color:#233b5a;text-align:left;font-weight:700;";
+
+        const isExpanded = calendarExpandedWeeks.has(week.number);
+
+        header.textContent =
+          `${isExpanded ? "▾" : "▸"} Тиждень ${week.number} ` +
+          `(${week.startDay}–${week.endDay} число)`;
+
+        const details = document.createElement("div");
+        details.hidden = !isExpanded;
+
+        for (let day = week.startDay; day <= week.endDay; day++) {
+          const row = document.createElement("div");
+          row.style.cssText =
+            "display:grid;grid-template-columns:125px 1fr 1fr;" +
+            "gap:12px;align-items:center;padding:13px 16px;" +
+            "border-top:1px solid #e8edf3;font-size:12px;";
+
+          const dateCell = document.createElement("strong");
+          dateCell.textContent =
+            calendarFormatDay(year, monthNumber, day);
+
+          const plannedCell = document.createElement("span");
+          plannedCell.textContent = "План: 0,00 грн";
+
+          const movedCell = document.createElement("span");
+          movedCell.textContent = "Перенесено: 0,00 грн";
+
+          row.append(dateCell, plannedCell, movedCell);
+          details.append(row);
+        }
+
+        header.addEventListener("click", () => {
+          if (calendarExpandedWeeks.has(week.number)) {
+            calendarExpandedWeeks.delete(week.number);
+          } else {
+            calendarExpandedWeeks.add(week.number);
+          }
+
+          calendarRender();
+        });
+
+        section.append(header, details);
+        calendarWeeksContainer.append(section);
+      }
+
+      document.querySelector("#calendarMessage").textContent =
+        "Календарна сітка готова. Завантаження платежів і квот " +
+        "підключимо наступним етапом.";
+    }
+
+    document.querySelector("#openCalendarBtn").addEventListener(
+      "click",
+      () => {
+        document.querySelector("#moduleHome").hidden = true;
+        document.querySelector("#registryModule").hidden = true;
+        document.querySelector("#usersModule").hidden = true;
+        document.querySelector("#budgetModule").hidden = true;
+
+        calendarModule.hidden = false;
+
+        calendarMonthInput.value ||= budgetUserMonth();
+        calendarRender();
+      }
+    );
+
+    document.querySelector("#backFromCalendarBtn").addEventListener(
+      "click",
+      () => {
+        calendarModule.hidden = true;
+        document.querySelector("#moduleHome").hidden = false;
+      }
+    );
+
+    calendarMonthInput.addEventListener("change", () => {
+      calendarExpandedWeeks.clear();
+      calendarRender();
+    });
+
+    document.querySelector("#calendarExpandAllBtn").addEventListener(
+      "click",
+      () => {
+        calendarGetWeeks(calendarMonthInput.value).forEach(week => {
+          calendarExpandedWeeks.add(week.number);
+        });
+
+        calendarRender();
+      }
+    );
+
+    document.querySelector("#calendarCollapseAllBtn").addEventListener(
+      "click",
+      () => {
+        calendarExpandedWeeks.clear();
+        calendarRender();
+      }
+    );
+    
     document.querySelector("#openBudgetBtn").addEventListener(
       "click",
       async () => {
