@@ -314,7 +314,28 @@
         <span id="calendarCount"></span>
       </div>
 
-      <div id="calendarWeeks" class="calendar-weeks"></div>
+      <div class="calendar-tabs">
+        <button id="calendarQuotaTab" type="button" class="is-active">
+          Розподіл квоти
+        </button>
+        <button id="calendarOverviewTab" type="button">
+          Зведена по оплатах
+        </button>
+      </div>
+
+      <div id="calendarWeeklyPanel">
+        <div id="calendarWeeklySummary" class="budget-summary"></div>
+        <div class="calendar-weekly-actions">
+          <button id="calendarConfirmPlan" type="button">
+            Підтвердити оплати згідно календарю
+          </button>
+        </div>
+        <div id="calendarWeeklyTable"></div>
+      </div>
+
+      <div id="calendarOverviewPanel" hidden>
+        <div id="calendarWeeks"></div>
+      </div>
 
       <div id="calendarMoveDialog" class="contract-modal" hidden>
         <div class="contract-modal-backdrop" data-calendar-close></div>
@@ -3552,6 +3573,38 @@
         `Показано договорів: ${lines.length} із ${budgetLines.length}`;
     }
 
+    let calActiveTab = "weekly";
+
+    function calSwitchTab(tab) {
+      calActiveTab = tab;
+
+      cal("calendarWeeklyPanel").hidden = tab !== "weekly";
+      cal("calendarOverviewPanel").hidden = tab !== "overview";
+
+      cal("calendarQuotaTab").classList.toggle(
+        "is-active", tab === "weekly"
+      );
+
+      cal("calendarOverviewTab").classList.toggle(
+        "is-active", tab === "overview"
+      );
+
+      cal("calendarExpand").hidden = tab !== "overview";
+      cal("calendarCollapse").hidden = tab !== "overview";
+
+      calRender();
+    }
+
+    cal("calendarQuotaTab").addEventListener(
+      "click",
+      () => calSwitchTab("weekly")
+    );
+
+    cal("calendarOverviewTab").addEventListener(
+      "click",
+      () => calSwitchTab("overview")
+    );
+    
     function calOpenMove(item) {
       calMovingId = item.id;
 
