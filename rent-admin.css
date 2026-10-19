@@ -2181,3 +2181,285 @@ button.module-card:hover {
     max-height: 95vh;
   }
 }
+
+/* ==========================================
+   КАЛЕНДАР: ДВІ ВКЛАДКИ ТА ТИЖНЕВІ КВОТИ
+   ========================================== */
+
+#calendarWeeklyPanel[hidden],
+#calendarOverviewPanel[hidden] {
+  display: none !important;
+}
+
+.calendar-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 0 0 15px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid #dce5f0;
+}
+
+.calendar-tabs button {
+  padding: 10px 18px;
+  border: 1px solid #dce5f0;
+  border-radius: 9px;
+  background: #fff;
+  color: #52657d;
+  font-weight: 650;
+  font-size: 13px;
+}
+
+.calendar-tabs button.is-active {
+  border-color: #233b5a;
+  background: #233b5a;
+  color: #fff;
+}
+
+#calendarWeeklySummary {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.calendar-summary-input {
+  width: 100%;
+  max-width: 180px;
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid #d9e1eb;
+  border-radius: 8px;
+  background: #fff;
+  color: #233247;
+  font-size: 15px;
+  font-weight: 650;
+}
+
+.calendar-weekly-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: 12px 0 15px;
+}
+
+#calendarConfirmPlan {
+  padding: 11px 18px;
+  border: 1px solid #19714e;
+  border-radius: 9px;
+  background: #19714e;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#calendarConfirmPlan:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.calendar-approved-label {
+  display: inline-block;
+  margin-left: 10px;
+  color: #19714e;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#calendarWeeklyBudgetTable,
+#calendarBudgetTable {
+  width: max-content;
+  min-width: 100%;
+  border-spacing: 0;
+  border-collapse: separate;
+  font-size: 12px;
+}
+
+#calendarWeeklyBudgetTable th,
+#calendarWeeklyBudgetTable td,
+#calendarBudgetTable th,
+#calendarBudgetTable td {
+  padding: 10px 11px;
+  min-width: 125px;
+  border-right: 1px solid #e8edf3;
+  border-bottom: 1px solid #e8edf3;
+  vertical-align: middle;
+}
+
+#calendarWeeklyBudgetTable thead th,
+#calendarBudgetTable thead th {
+  position: sticky;
+  top: 0;
+  z-index: 3;
+  background: #eaf0f7;
+  color: #30425b;
+  font-weight: 700;
+  text-align: center;
+}
+
+#calendarWeeklyBudgetTable tbody tr:nth-child(even) td,
+#calendarBudgetTable tbody tr:nth-child(even) td {
+  background: #fbfcfe;
+}
+
+#calendarWeeklyBudgetTable tbody tr:hover td {
+  background: #f1f6fd;
+}
+
+#calendarWeeklyBudgetTable .budget-money,
+#calendarBudgetTable .budget-money {
+  text-align: right;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+#calendarWeeklyBudgetTable .calendar-sort-heading {
+  cursor: pointer;
+  user-select: none;
+}
+
+#calendarWeeklyBudgetTable .calendar-sort-heading:hover {
+  background: #d8e5f4;
+  color: #155da8;
+}
+
+#calendarWeeklyBudgetTable .calendar-row-actions {
+  min-width: 115px;
+  text-align: center;
+}
+
+#calendarWeeklyBudgetTable .calendar-edit-btn {
+  padding: 6px 10px;
+  border: 1px solid #c4d5e8;
+  border-radius: 7px;
+  background: #fff;
+  color: #2468c0;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+#calendarWeeklyBudgetTable tfoot td,
+#calendarBudgetTable tfoot td {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  background: #dce8f6;
+  font-weight: 700;
+}
+
+#calendarBudgetTable .calendar-overview-status {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 6px 4px;
+  font-size: 11px;
+  text-align: center;
+}
+
+#calendarBudgetTable .calendar-overview-status strong {
+  color: #19714e;
+}
+
+#calendarBudgetTable .calendar-has-transfer,
+#calendarWeeklyBudgetTable .calendar-has-transfer {
+  background: #fff0bd !important;
+  color: #805500;
+  font-weight: 650;
+}
+
+#calendarBudgetTable .calendar-has-transfer small {
+  display: block;
+  margin-top: 5px;
+  font-size: 10px;
+}
+
+.calendar-quick-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgba(24, 39, 62, .55);
+}
+
+.calendar-quick-dialog {
+  width: min(520px, 100%);
+  max-height: 90vh;
+  overflow: auto;
+  padding: 24px;
+  border-radius: 15px;
+  background: #fff;
+  box-shadow: 0 24px 70px rgba(20, 36, 60, .25);
+}
+
+.calendar-quick-dialog h2 {
+  margin: 0 0 12px;
+  font-size: 19px;
+}
+
+.calendar-quick-note {
+  margin: 0 0 18px;
+  color: #68788b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.calendar-quick-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 0;
+  border-top: 1px solid #e8edf3;
+}
+
+.calendar-quick-row label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 11px;
+}
+
+.calendar-quick-row input {
+  width: 140px;
+  height: 36px;
+  padding: 7px;
+  border: 1px solid #d9e1eb;
+  border-radius: 7px;
+}
+
+.calendar-quick-row button,
+.calendar-quick-actions button {
+  padding: 9px 12px;
+  border: 1px solid #c8d6e6;
+  border-radius: 8px;
+  background: #f5f8fc;
+  color: #233b5a;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.calendar-quick-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.calendar-quick-actions button:last-child {
+  border-color: #19714e;
+  background: #19714e;
+  color: #fff;
+}
+
+@media (max-width: 850px) {
+  #calendarWeeklySummary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .calendar-tabs {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 500px) {
+  #calendarWeeklySummary {
+    grid-template-columns: 1fr;
+  }
+}
