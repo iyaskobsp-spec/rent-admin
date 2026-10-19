@@ -2425,6 +2425,937 @@ async function initializeRentAuth() {
   console.log("AUTH: перший адміністратор створений");
 }
 
+// ========================================
+// ПЛАТІЖНИЙ КАЛЕНДАР: БАЗА ДАНИХ
+// ========================================
+
+async function initializeRentCalendar() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS rent_calendar_quota (
+      week_start DATE PRIMARY KEY,
+      amount NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK(amount >= 0),
+      updated_by BIGINT REFERENCES rent_users(id) ON DELETE SET NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+
+    CREATE TABLE IF NOT EXISTS rent_calendar_items (
+      id BIGSERIAL PRIMARY KEY,
+      budget_line_id BIGINT NOT NULL REFERENCES rent_budget_lines(id),
+      contract_id TEXT NOT NULL,
+      form TEXT NOT NULL CHECK(form IN ('f1','f2')),
+      original_month VARCHAR(7) NOT NULL,
+      original_week INTEGER NOT NULL,
+      original_amount NUMERIC(14,2) NOT NULL CHECK(original_amount >= 0),
+      amount NUMERIC(14,2) NOT NULL CHECK(amount >= 0),
+      due_date DATE NOT NULL,
+      initial_date DATE NOT NULL,
+      parent_id BIGINT REFERENCES rent_calendar_items(id),
+      funded NUMERIC(14,2) NOT NULL DEFAULT 0 CHECK(funded >= 0),
+      manually_funded BOOLEAN NOT NULL DEFAULT FALSE,
+      actual NUMERIC(14,2),
+      confirmed_at TIMESTAMPTZ,
+      confirmed_by BIGINT REFERENCES rent_users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      CHECK (funded <= amount),
+      CHECK (actual IS NULL OR actual >= 0)
+    );
+
+    CREATE UNIQUE INDEX IF NOT EXISTS rent_calendar_origin_unique
+      ON rent_calendar_items(budget_line_id, form, original_week)
+      WHERE parent_id IS NULL;
+
+    CREATE INDEX IF NOT EXISTS rent_calendar_due_idx
+      ON rent_calendar_items(due_date);
+
+    CREATE TABLE IF NOT EXISTS rent_calendar_events (
+      id BIGSERIAL PRIMARY KEY,
+      item_id BIGINT REFERENCES rent_calendar_items(id),
+      action TEXT NOT NULL,
+      details JSONB NOT NULL DEFAULT '{}'::jsonb,
+      actor_id BIGINT REFERENCES rent_users(id) ON DELETE SET NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+}
+
+function calendarIso(date) {
+  return (
+    date instanceof Date
+      ? date.toISOString()
+      : String(date)
+  ).slice(0, 10);
+}
+
+function calendarMonday(iso) {
+  const d = new Date(`${iso}T00:00:00Z`);
+  const day = (d.getUTCDay() + 6) % 7;
+
+  d.setUTCDate(d.getUTCDate() - day);
+
+  return calendarIso(d);
+}
+
+function calendarMoneyInt(raw) {
+  if (
+    raw === null ||
+    raw === undefined ||
+    raw === "" ||
+    !/^\d+(?:\.\d{1,2})?$/.test(String(raw))
+  ) {
+    return null;
+  }
+
+  const n = Math.round(Number(raw) * 100);
+
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
+}
+
+function calendarValidDate(raw) {
+  if (
+    typeof raw !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(raw)
+  ) {
+    return false;
+  }
+
+  const d = new Date(`${raw}T00:00:00Z`);
+
+  return !Number.isNaN(d.getTime()) &&
+    calendarIso(d) === raw;
+}
+
+function calendarMovable(terms) {
+  const data = terms || {};
+
+  const text = Object.entries(data)
+    .filter(([key, value]) =>
+      /перенес|примітк|shift/i.test(key) ||
+      /перенес/i.test(String(value || ""))
+    )
+    .map(([key, value]) => `${key}: ${value}`)
+    .join(" ")
+    .toLowerCase();
+
+  if (
+    !text ||
+    /не можна|не дозвол|неможлив|заборон|відсутн|без перенес|перенес[^.;]{0,40}:\s*(ні|ніт|no|false)/i
+      .test(text)
+  ) {
+    return false;
+  }
+
+  return /можлив|дозвол|можна|так|погоджен/i.test(text);
+}
+
+function calendarWeekFinished(monday) {
+  const next = new Date(`${monday}T00:00:00Z`);
+  next.setUTCDate(next.getUTCDate() + 7);
+
+  const now = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Europe/Kyiv",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).format(new Date());
+
+  return now >= calendarIso(next);
+}
+
+function calendarRole(req, res, next) {
+  if (req.rentUser.must_change_password) {
+    return res.status(403).json({
+      ok: false,
+      error: "Змініть тимчасовий пароль"
+    });
+  }
+
+  if (
+    req.method !== "GET" &&
+    !["admin", "editor"].includes(req.rentUser.role)
+  ) {
+    return res.status(403).json({
+      ok: false,
+      error: "Недостатньо прав"
+    });
+  }
+
+  next();
+}
+
+app.use(
+  "/api/calendar",
+  rentRequireSession,
+  calendarRole
+);
+
+// ========================================
+// ЗАВАНТАЖЕННЯ ПЛАНУ З БЮДЖЕТУ
+// ========================================
+
+app.post(
+  "/api/calendar/:month/initialize",
+  async (req, res, next) => {
+    const month = req.params.month;
+
+    if (!rentBudgetValidMonth(month)) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний місяць"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const budget = await client.query(
+        `SELECT id
+         FROM rent_budgets
+         WHERE budget_month = $1
+           AND status = 'approved'`,
+        [month]
+      );
+
+      if (!budget.rowCount) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Спочатку затвердіть бюджет цього місяця"
+        });
+      }
+
+      const lines = await client.query(
+        `SELECT *
+         FROM rent_budget_lines
+         WHERE budget_id = $1`,
+        [budget.rows[0].id]
+      );
+
+      const weeks = rentBudgetWeeks(month);
+      let added = 0;
+
+      for (const line of lines.rows) {
+        for (const form of ["f1", "f2"]) {
+          const amounts = line[`weeks_${form}`] || [];
+
+          for (let i = 0; i < weeks.length; i++) {
+            const cents = calendarMoneyInt(
+              amounts[i] ?? 0
+            );
+
+            if (!cents) continue;
+
+            const from = weeks[i].from;
+            const to = weeks[i].to;
+
+            // Початкова дата в межах бюджетного тижня.
+            // Далі користувач може перенести допустимий платіж.
+            let chosen = from;
+
+            for (let day = from; day <= to; day++) {
+              const date = new Date(
+                `${month}-${String(day).padStart(2, "0")}T00:00:00Z`
+              );
+
+              if (date.getUTCDay() === 1) {
+                chosen = day;
+                break;
+              }
+
+              if (date.getUTCDay() === 5) {
+                chosen = day;
+                break;
+              }
+            }
+
+            const due =
+              `${month}-${String(chosen).padStart(2, "0")}`;
+
+            const inserted = await client.query(
+              `INSERT INTO rent_calendar_items (
+                 budget_line_id,
+                 contract_id,
+                 form,
+                 original_month,
+                 original_week,
+                 original_amount,
+                 amount,
+                 due_date,
+                 initial_date
+               )
+               VALUES ($1,$2,$3,$4,$5,$6,$6,$7,$7)
+               ON CONFLICT (
+                 budget_line_id,
+                 form,
+                 original_week
+               )
+               WHERE parent_id IS NULL
+               DO NOTHING
+               RETURNING id`,
+              [
+                line.id,
+                line.contract_id,
+                form,
+                month,
+                i,
+                cents / 100,
+                due
+              ]
+            );
+
+            added += inserted.rowCount;
+          }
+        }
+      }
+
+      await client.query("COMMIT");
+
+      res.json({ ok: true, added });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      next(error);
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ========================================
+// ОТРИМАННЯ ПЛАТЕЖІВ КАЛЕНДАРЯ
+// ========================================
+
+app.get("/api/calendar/:month", async (req, res, next) => {
+  const month = req.params.month;
+
+  if (!rentBudgetValidMonth(month)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Некоректний місяць"
+    });
+  }
+
+  try {
+    const budget = await pool.query(
+      `SELECT status
+       FROM rent_budgets
+       WHERE budget_month = $1`,
+      [month]
+    );
+
+    const items = await pool.query(
+      `SELECT
+         i.*,
+         l.tt_code,
+         l.object_name,
+         l.address,
+         l.payment_due_text,
+         l.budget_comment,
+         c.payment_terms,
+         c.critical_terms
+       FROM rent_calendar_items i
+       LEFT JOIN rent_budget_lines l
+         ON l.id = i.budget_line_id
+       LEFT JOIN rent_contracts c
+         ON c.id = i.contract_id
+       WHERE (
+         i.due_date >= $1::date
+         AND i.due_date < ($1::date + INTERVAL '1 month')
+       )
+       OR i.original_month = $2
+       ORDER BY i.due_date, i.contract_id, i.form, i.id`,
+      [`${month}-01`, month]
+    );
+
+    const quota = await pool.query(
+      `SELECT
+         week_start::text AS week_start,
+         amount
+       FROM rent_calendar_quota
+       WHERE week_start >= ($1::date - INTERVAL '7 days')
+         AND week_start < ($1::date + INTERVAL '1 month')`,
+      [`${month}-01`]
+    );
+
+    res.json({
+      ok: true,
+      budgetStatus: budget.rows[0]?.status || null,
+      weeks: rentBudgetWeeks(month),
+      items: items.rows,
+      quotas: quota.rows
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// ========================================
+// ЗБЕРЕЖЕННЯ ТИЖНЕВОЇ КВОТИ
+// ========================================
+
+app.put(
+  "/api/calendar/quota/:date",
+  async (req, res, next) => {
+    const date = req.params.date;
+    const amount = calendarMoneyInt(req.body?.amount);
+
+    if (
+      !calendarValidDate(date) ||
+      calendarMonday(date) !== date ||
+      amount === null
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Перевірте дату понеділка та суму квоти"
+      });
+    }
+
+    try {
+      await pool.query(
+        `INSERT INTO rent_calendar_quota (
+           week_start,
+           amount,
+           updated_by
+         )
+         VALUES ($1,$2,$3)
+         ON CONFLICT (week_start)
+         DO UPDATE SET
+           amount = EXCLUDED.amount,
+           updated_by = EXCLUDED.updated_by,
+           updated_at = NOW()`,
+        [date, amount / 100, req.rentUser.id]
+      );
+
+      res.json({ ok: true });
+    } catch (error) {
+      next(error);
+    }
+  }
+);
+
+// ========================================
+// АВТОМАТИЧНА ПРОПОЗИЦІЯ РОЗПОДІЛУ КВОТИ
+// ========================================
+
+app.post(
+  "/api/calendar/week/:date/allocate",
+  async (req, res, next) => {
+    const date = req.params.date;
+
+    if (
+      !calendarValidDate(date) ||
+      calendarMonday(date) !== date
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректний тиждень"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const quota = await client.query(
+        `SELECT amount
+         FROM rent_calendar_quota
+         WHERE week_start = $1
+         FOR UPDATE`,
+        [date]
+      );
+
+      if (!quota.rowCount) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Спочатку внесіть квоту"
+        });
+      }
+
+      const rows = await client.query(
+        `SELECT i.*, c.critical_terms
+         FROM rent_calendar_items i
+         LEFT JOIN rent_contracts c
+           ON c.id = i.contract_id
+         WHERE i.due_date >= $1::date
+           AND i.due_date < ($1::date + INTERVAL '7 days')
+         ORDER BY i.due_date, i.contract_id, i.form, i.id
+         FOR UPDATE OF i`,
+        [date]
+      );
+
+      const protectedSum = rows.rows
+        .filter(r => r.manually_funded || r.confirmed_at)
+        .reduce(
+          (sum, r) =>
+            sum + Math.round(Number(r.funded) * 100),
+          0
+        );
+
+      let available =
+        Math.round(Number(quota.rows[0].amount) * 100) -
+        protectedSum;
+
+      if (available < 0) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Квота менша за вручну розподілені суми"
+        });
+      }
+
+      const sorted = rows.rows
+        .filter(r => !r.manually_funded && !r.confirmed_at)
+        .sort((a, b) => {
+          const movable = r =>
+            calendarMovable(r.critical_terms);
+
+          return (
+            Number(movable(a)) - Number(movable(b)) ||
+            calendarIso(a.due_date)
+              .localeCompare(calendarIso(b.due_date)) ||
+            a.id - b.id
+          );
+        });
+
+      for (const row of sorted) {
+        const cents = Math.round(
+          Number(row.amount) * 100
+        );
+
+        const funded = cents <= available
+          ? cents
+          : 0;
+
+        available -= funded;
+
+        await client.query(
+          `UPDATE rent_calendar_items
+           SET funded = $2
+           WHERE id = $1`,
+          [row.id, funded / 100]
+        );
+      }
+
+      await client.query("COMMIT");
+      res.json({ ok: true });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      next(error);
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ========================================
+// РУЧНЕ ФІНАНСУВАННЯ ПЛАТЕЖУ
+// ========================================
+
+app.patch(
+  "/api/calendar/items/:id/funded",
+  async (req, res, next) => {
+    const id = Number(req.params.id);
+    const cents = calendarMoneyInt(req.body?.amount);
+
+    if (
+      !Number.isSafeInteger(id) ||
+      id < 1 ||
+      cents === null
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректна сума"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const found = await client.query(
+        `SELECT *
+         FROM rent_calendar_items
+         WHERE id = $1
+         FOR UPDATE`,
+        [id]
+      );
+
+      if (!found.rowCount || found.rows[0].confirmed_at) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Платіж не знайдено або тиждень підтверджено"
+        });
+      }
+
+      const item = found.rows[0];
+      const week = calendarMonday(
+        calendarIso(item.due_date)
+      );
+
+      const quota = await client.query(
+        `SELECT amount
+         FROM rent_calendar_quota
+         WHERE week_start = $1
+         FOR UPDATE`,
+        [week]
+      );
+
+      if (!quota.rowCount) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Спочатку введіть квоту тижня"
+        });
+      }
+
+      const used = await client.query(
+        `SELECT COALESCE(SUM(funded), 0) AS amount
+         FROM rent_calendar_items
+         WHERE due_date >= $1::date
+           AND due_date < ($1::date + INTERVAL '7 days')
+           AND id <> $2`,
+        [week, id]
+      );
+
+      if (
+        cents > Math.round(Number(item.amount) * 100) ||
+        cents +
+          Math.round(Number(used.rows[0].amount) * 100) >
+          Math.round(Number(quota.rows[0].amount) * 100)
+      ) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Перевищення залишку платежу або квоти"
+        });
+      }
+
+      await client.query(
+        `UPDATE rent_calendar_items
+         SET funded = $2,
+             manually_funded = TRUE
+         WHERE id = $1`,
+        [id, cents / 100]
+      );
+
+      await client.query("COMMIT");
+      res.json({ ok: true });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      next(error);
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ========================================
+// ПОВНЕ АБО ЧАСТКОВЕ ПЕРЕНЕСЕННЯ
+// ========================================
+
+app.post(
+  "/api/calendar/items/:id/move",
+  async (req, res, next) => {
+    const id = Number(req.params.id);
+    const cents = calendarMoneyInt(req.body?.amount);
+    const date = req.body?.date;
+
+    if (
+      !Number.isSafeInteger(id) ||
+      id < 1 ||
+      !cents ||
+      !calendarValidDate(date)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Перевірте суму та дату"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const found = await client.query(
+        `SELECT i.*, c.critical_terms
+         FROM rent_calendar_items i
+         LEFT JOIN rent_contracts c
+           ON c.id = i.contract_id
+         WHERE i.id = $1
+         FOR UPDATE OF i`,
+        [id]
+      );
+
+      const item = found.rows[0];
+
+      if (!item || item.confirmed_at) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Платіж уже підтверджено або не знайдено"
+        });
+      }
+
+      if (!calendarMovable(item.critical_terms)) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "У договорі не підтверджено можливість перенесення"
+        });
+      }
+
+      if (
+        cents > Math.round(Number(item.amount) * 100) ||
+        date === calendarIso(item.due_date)
+      ) {
+        await client.query("ROLLBACK");
+
+        return res.status(400).json({
+          ok: false,
+          error: "Сума завелика або дата не змінюється"
+        });
+      }
+
+      const remaining =
+        (
+          Math.round(Number(item.amount) * 100) -
+          cents
+        ) / 100;
+
+      const oldFunded = Math.round(
+        Number(item.funded) * 100
+      );
+
+      await client.query(
+        `UPDATE rent_calendar_items
+         SET amount = $2,
+             funded = $3
+         WHERE id = $1`,
+        [
+          id,
+          remaining,
+          Math.min(
+            oldFunded,
+            Math.round(remaining * 100)
+          ) / 100
+        ]
+      );
+
+      const created = await client.query(
+        `INSERT INTO rent_calendar_items (
+           budget_line_id,
+           contract_id,
+           form,
+           original_month,
+           original_week,
+           original_amount,
+           amount,
+           due_date,
+           initial_date,
+           parent_id
+         )
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         RETURNING id`,
+        [
+          item.budget_line_id,
+          item.contract_id,
+          item.form,
+          item.original_month,
+          item.original_week,
+          0,
+          cents / 100,
+          date,
+          calendarIso(item.initial_date),
+          id
+        ]
+      );
+
+      await client.query(
+        `INSERT INTO rent_calendar_events (
+           item_id,
+           action,
+           details,
+           actor_id
+         )
+         VALUES ($1,'move',$2,$3)`,
+        [
+          id,
+          JSON.stringify({
+            newItemId: created.rows[0].id,
+            amount: cents / 100,
+            from: calendarIso(item.due_date),
+            to: date
+          }),
+          req.rentUser.id
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        ok: true,
+        newItemId: created.rows[0].id
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      next(error);
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ========================================
+// ПІДТВЕРДЖЕННЯ ФАКТИЧНИХ ОПЛАТ
+// ========================================
+
+app.post(
+  "/api/calendar/week/:date/confirm",
+  async (req, res, next) => {
+    const date = req.params.date;
+    const payments = req.body?.payments;
+
+    if (
+      !calendarValidDate(date) ||
+      calendarMonday(date) !== date ||
+      !Array.isArray(payments)
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректні фактичні оплати"
+      });
+    }
+
+    if (!calendarWeekFinished(date)) {
+      return res.status(409).json({
+        ok: false,
+        error: "Факт підтверджуємо тільки після завершення тижня"
+      });
+    }
+
+    const map = new Map();
+
+    for (const payment of payments) {
+      const cents = calendarMoneyInt(payment.actual);
+      const id = Number(payment.id);
+
+      if (
+        !Number.isSafeInteger(id) ||
+        id < 1 ||
+        cents === null ||
+        map.has(id)
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error: "Перевірте фактичні суми"
+        });
+      }
+
+      map.set(id, cents);
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      const rows = await client.query(
+        `SELECT *
+         FROM rent_calendar_items
+         WHERE due_date >= $1::date
+           AND due_date < ($1::date + INTERVAL '7 days')
+           AND amount > 0
+         FOR UPDATE`,
+        [date]
+      );
+
+      if (
+        rows.rows.some(r =>
+          map.get(Number(r.id)) >
+          Math.round(Number(r.amount) * 100)
+        )
+      ) {
+        await client.query("ROLLBACK");
+
+        return res.status(400).json({
+          ok: false,
+          error: "Факт не може перевищувати зобов'язання за платежем"
+        });
+      }
+
+      if (
+        rows.rows.some(r => r.confirmed_at) ||
+        rows.rowCount !== map.size ||
+        rows.rows.some(r => !map.has(Number(r.id)))
+      ) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Перелік платежів змінився або тиждень уже підтверджений. Оновіть календар."
+        });
+      }
+
+      for (const row of rows.rows) {
+        await client.query(
+          `UPDATE rent_calendar_items
+           SET actual = $2,
+               confirmed_at = NOW(),
+               confirmed_by = $3
+           WHERE id = $1`,
+          [
+            row.id,
+            map.get(Number(row.id)) / 100,
+            req.rentUser.id
+          ]
+        );
+      }
+
+      await client.query(
+        `INSERT INTO rent_calendar_events (
+           item_id,
+           action,
+           details,
+           actor_id
+         )
+         VALUES (NULL,'confirm_week',$1,$2)`,
+        [
+          JSON.stringify({
+            week: date,
+            count: rows.rowCount
+          }),
+          req.rentUser.id
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        ok: true,
+        count: rows.rowCount
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      next(error);
+    } finally {
+      client.release();
+    }
+  }
+);
+
 async function initializeRentBudget() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS rent_budgets (
@@ -3748,7 +4679,8 @@ async function initializeDatabase() {
     console.log("DATABASE TABLES: rent_contracts ready");
 
     await initializeRentAuth();
-    await initializeRentBudget();    
+    await initializeRentBudget();
+    await initializeRentCalendar();  
   } catch (error) {
     console.error("DATABASE INIT ERROR:", error.message);
   }
