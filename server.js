@@ -2819,13 +2819,40 @@ app.get("/api/calendar/:month", async (req, res, next) => {
       [`${month}-01`]
     );
 
+    const approvalsResult = await pool.query(
+      `SELECT DISTINCT ON (details->>'week')
+         details->>'week' AS week,
+         details,
+         created_at
+       FROM rent_calendar_events
+       WHERE action = 'approve_plan'
+         AND details->>'week' >= $1
+         AND details->>'week' <= $2
+       ORDER BY details->>'week', created_at DESC`,
+      [
+        calendarMonday(`${month}-01`),
+        calendarMonday(
+          calendarIso(
+            new Date(
+              Date.UTC(
+                Number(month.slice(0, 4)),
+                Number(month.slice(5, 7)),
+                0
+              )
+            )
+          )
+        )
+      ]
+    );
+    
     return res.json({
       ok: true,
       budgetStatus: budget?.status || null,
       weeks: rentBudgetWeeks(month),
       lines,
       items: itemsResult.rows,
-      quotas: quotaResult.rows
+      quotas: quotaResult.rows,
+      approvals: approvalsResult.rows
     });
   } catch (error) {
     next(error);
@@ -3250,6 +3277,147 @@ app.post(
       res.json({
         ok: true,
         newItemId: created.rows[0].id
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+      next(error);
+    } finally {
+      client.release();
+    }
+  }
+);
+
+// ========================================
+// ЗАТВЕРДЖЕННЯ ПЛАТІЖНОГО ПЛАНУ НА ТИЖДЕНЬ
+// ========================================
+
+app.post(
+  "/api/calendar/week/:date/approve-plan",
+  async (req, res, next) => {
+    const date = req.params.date;
+
+    if (
+      !calendarValidDate(date) ||
+      calendarMonday(date) !== date
+    ) {
+      return res.status(400).json({
+        ok: false,
+        error: "Некоректна дата тижня"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      // Захист від одночасного редагування та затвердження.
+      await client.query(
+        "SELECT pg_advisory_xact_lock(731094, 2026)"
+      );
+
+      const quota = await client.query(
+        `SELECT amount
+         FROM rent_calendar_quota
+         WHERE week_start = $1
+         FOR UPDATE`,
+        [date]
+      );
+
+      if (!quota.rowCount) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Спочатку потрібно вказати квоту"
+        });
+      }
+
+      const rows = await client.query(
+        `SELECT id, amount, funded
+         FROM rent_calendar_items
+         WHERE due_date >= $1::date
+           AND due_date < ($1::date + INTERVAL '7 days')
+           AND amount > 0
+         FOR UPDATE`,
+        [date]
+      );
+
+      if (!rows.rowCount) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "На цей тиждень немає платежів"
+        });
+      }
+
+      const funded = rows.rows.reduce(
+        (sum, row) =>
+          sum + Math.round(Number(row.funded) * 100),
+        0
+      );
+
+      const limit = Math.round(
+        Number(quota.rows[0].amount) * 100
+      );
+
+      if (funded > limit) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "Розподілені платежі перевищують квоту"
+        });
+      }
+
+      const previous = await client.query(
+        `SELECT id
+         FROM rent_calendar_events
+         WHERE action = 'approve_plan'
+           AND details->>'week' = $1
+         LIMIT 1`,
+        [date]
+      );
+
+      if (previous.rowCount) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error: "План цього тижня вже підтверджений"
+        });
+      }
+
+      await client.query(
+        `INSERT INTO rent_calendar_events (
+           item_id, action, details, actor_id
+         )
+         VALUES (
+           NULL, 'approve_plan', $1::jsonb, $2
+         )`,
+        [
+          JSON.stringify({
+            week: date,
+            quota: limit / 100,
+            funded: funded / 100,
+            payments: rows.rows.map(row => ({
+              id: Number(row.id),
+              planned: Number(row.amount),
+              allocated: Number(row.funded)
+            }))
+          }),
+          req.rentUser.id
+        ]
+      );
+
+      await client.query("COMMIT");
+
+      res.json({
+        ok: true,
+        week: date,
+        quota: limit / 100,
+        funded: funded / 100
       });
     } catch (error) {
       await client.query("ROLLBACK");
