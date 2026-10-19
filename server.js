@@ -2748,22 +2748,36 @@ app.get("/api/calendar/:month", async (req, res, next) => {
 
     let lines = [];
 
-    if (budget) {
-      const lineResult = await pool.query(
-        `SELECT
-           l.*,
-           c.payment_terms,
-           c.critical_terms
-         FROM rent_budget_lines l
-         LEFT JOIN rent_contracts c
-           ON c.id = l.contract_id
-         WHERE l.budget_id = $1
-         ORDER BY l.tt_code NULLS LAST, l.contract_id`,
-        [budget.id]
-      );
+    const lineResult = await pool.query(
+      `SELECT DISTINCT ON (l.contract_id)
+         l.*,
+         c.payment_terms,
+         c.critical_terms
+       FROM rent_budget_lines l
+       JOIN rent_budgets b
+         ON b.id = l.budget_id
+       LEFT JOIN rent_contracts c
+         ON c.id = l.contract_id
+       WHERE (
+         $2::bigint IS NOT NULL
+         AND l.budget_id = $2
+       )
+       OR EXISTS (
+         SELECT 1
+         FROM rent_calendar_items i
+         WHERE i.budget_line_id = l.id
+           AND i.due_date >= $1::date
+           AND i.due_date < ($1::date + INTERVAL '1 month')
+           AND i.amount > 0
+       )
+       ORDER BY
+         l.contract_id,
+         CASE WHEN l.budget_id = $2 THEN 0 ELSE 1 END,
+         b.budget_month DESC`,
+      [`${month}-01`, budget?.id || null]
+    );
 
-      lines = lineResult.rows;
-    }
+    lines = lineResult.rows;
 
     const itemsResult = await pool.query(
       `SELECT
