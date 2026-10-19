@@ -3152,6 +3152,13 @@
             }
           );
 
+          await calRequest(
+            `/api/calendar/week/${monday}/allocate`,
+            {
+              method: "POST"
+            }
+          );
+
           await calLoad();
         } catch (error) {
           alert(error.message);
@@ -3179,6 +3186,10 @@
         !calCanWrite() ||
         quota === null ||
         !all.length;
+
+      cal("calendarWeeklyPanel")
+        .querySelectorAll(".calendar-approved-label")
+        .forEach(element => element.remove());
 
       if (approval) {
         const message = calEl(
@@ -3824,6 +3835,60 @@
         `Договорів: ${visible.length}`;
     }
 
+    let calActiveTab = "weekly";
+
+    async function calSwitchTab(tab) {
+      calActiveTab = tab;
+
+      const weekly = tab === "weekly";
+
+      cal("calendarWeeklyPanel").hidden = !weekly;
+      cal("calendarOverviewPanel").hidden = weekly;
+
+      cal("calendarQuotaTab").classList.toggle(
+        "is-active",
+        weekly
+      );
+
+      cal("calendarOverviewTab").classList.toggle(
+        "is-active",
+        !weekly
+      );
+
+      cal("calendarExpand").hidden = weekly;
+      cal("calendarCollapse").hidden = weekly;
+
+      cal("calendarMonth").disabled = weekly;
+
+      if (weekly) {
+        const nextMonth = calNextWeekStart().slice(0, 7);
+
+        cal("calendarMonth").value = nextMonth;
+        calExpanded.clear();
+
+        await calLoad();
+        return;
+      }
+
+      cal("calendarMonth").disabled = false;
+
+      if (!cal("calendarMonth").value) {
+        cal("calendarMonth").value = budgetUserMonth();
+      }
+
+      await calLoad();
+    }
+
+    cal("calendarQuotaTab").addEventListener(
+      "click",
+      () => calSwitchTab("weekly")
+    );
+
+    cal("calendarOverviewTab").addEventListener(
+      "click",
+      () => calSwitchTab("overview")
+    );
+
     function calRender() {
       if (calActiveTab === "weekly") {
         calWeeklyRender();
@@ -3905,9 +3970,8 @@
         });
 
         cal("calendarModule").hidden = false;
-        cal("calendarMonth").value ||= budgetUserMonth();
 
-        await calLoad();
+        await calSwitchTab("weekly");
       }
     );
 
@@ -3922,6 +3986,8 @@
     cal("calendarMonth").addEventListener(
       "change",
       () => {
+        if (calActiveTab !== "overview") return;
+
         calExpanded.clear();
         calLoad();
       }
