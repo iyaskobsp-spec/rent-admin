@@ -2463,3 +2463,68 @@ button.module-card:hover {
     grid-template-columns: 1fr;
   }
 }
+
+#calendarAddRow {
+  padding: 11px 18px;
+  border: 1px solid #2468c0;
+  border-radius: 9px;
+  background: #fff;
+  color: #2468c0;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+#calendarAddRow:hover:not(:disabled) {
+  background: #edf4fc;
+}
+
+#calendarAddRow:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.calendar-quick-payment-info {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 160px;
+}
+
+.calendar-quick-payment-info span {
+  color: #66778d;
+  font-size: 11px;
+}
+
+.calendar-quick-row select,
+.calendar-quick-target select {
+  min-width: 190px;
+  height: 36px;
+  padding: 0 9px;
+  border: 1px solid #d9e1eb;
+  border-radius: 7px;
+  background: #fff;
+  color: #233247;
+}
+
+.calendar-quick-target {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 15px;
+  color: #526b87;
+  font-size: 11px;
+}
+
+.calendar-quick-message {
+  min-height: 18px;
+  margin: 12px 0 0;
+}
+
+.calendar-quick-message.is-error {
+  color: #a12f3c;
+}
+
+.calendar-quick-row small {
+  color: #8a98a9;
+  font-size: 10px;
+}
