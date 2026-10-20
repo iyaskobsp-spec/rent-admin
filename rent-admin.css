@@ -2538,3 +2538,183 @@ button.module-card:hover {
   color: #8a98a9;
   font-size: 10px;
 }
+
+/* ==========================================
+   СУЧАСНИЙ ВИБІР МІСЯЦЯ
+   ========================================== */
+
+.rent-month-picker {
+  position: relative;
+  width: 205px;
+}
+
+.rent-month-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  width: 100%;
+  height: 40px;
+  padding: 0 11px 0 13px;
+  border: 1px solid #d9e1eb;
+  border-radius: 9px;
+  background: #fbfcfe;
+  color: #233247;
+  font-size: 13px;
+  font-weight: 600;
+  text-align: left;
+  box-shadow: 0 1px 2px rgba(25, 45, 75, .025);
+  transition:
+    border-color .18s,
+    box-shadow .18s,
+    background .18s;
+}
+
+.rent-month-trigger:hover:not(:disabled) {
+  background: #fff;
+  border-color: #b7cbe3;
+}
+
+.rent-month-trigger:focus-visible,
+.rent-month-picker:has(
+  .rent-month-panel:not([hidden])
+) .rent-month-trigger {
+  outline: none;
+  border-color: #789bc9;
+  box-shadow:
+    0 0 0 3px rgba(78, 122, 185, .13);
+}
+
+.rent-month-trigger:disabled {
+  background: #f2f5f8;
+  color: #8b98a8;
+  cursor: default;
+}
+
+.rent-month-icon {
+  position: relative;
+  flex: 0 0 17px;
+  width: 17px;
+  height: 16px;
+  border: 1.5px solid #6d8098;
+  border-radius: 4px;
+}
+
+.rent-month-icon::before {
+  content: "";
+  position: absolute;
+  left: -1.5px;
+  right: -1.5px;
+  top: 4px;
+  border-top: 1.5px solid #6d8098;
+}
+
+.rent-month-icon::after {
+  content: "";
+  position: absolute;
+  left: 3px;
+  right: 3px;
+  top: -3px;
+  height: 4px;
+  border-left: 1.5px solid #6d8098;
+  border-right: 1.5px solid #6d8098;
+}
+
+.rent-month-panel {
+  position: absolute;
+  top: calc(100% + 7px);
+  left: 0;
+  z-index: 100;
+  width: 285px;
+  padding: 13px;
+  border: 1px solid #dce5f0;
+  border-radius: 13px;
+  background: #fff;
+  box-shadow:
+    0 14px 38px rgba(24, 46, 76, .14);
+}
+
+.rent-month-panel[hidden] {
+  display: none !important;
+}
+
+.rent-month-header {
+  display: grid;
+  grid-template-columns: 34px 1fr 34px;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.rent-month-header strong {
+  color: #203956;
+  font-size: 14px;
+  text-align: center;
+}
+
+.rent-month-arrow {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid #e0e6ef;
+  border-radius: 8px;
+  background: #f8fafd;
+  color: #294667;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.rent-month-arrow:hover:not(:disabled) {
+  border-color: #bfd0e4;
+  background: #edf3fa;
+}
+
+.rent-month-arrow:disabled {
+  opacity: .3;
+  cursor: default;
+}
+
+.rent-month-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+}
+
+.rent-month-option {
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #52657d;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.rent-month-option:hover {
+  border-color: #d7e3f0;
+  background: #edf4fc;
+  color: #245e9f;
+}
+
+.rent-month-option.is-current {
+  border-color: #cbd9e9;
+}
+
+.rent-month-option.is-selected {
+  border-color: #233b5a;
+  background: #233b5a;
+  color: #fff;
+}
+
+@media (max-width: 600px) {
+  .rent-month-picker {
+    width: 100%;
+  }
+
+  .rent-month-panel {
+    width: min(285px, calc(100vw - 40px));
+  }
+}
