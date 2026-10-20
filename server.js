@@ -3177,18 +3177,28 @@ app.post(
         });
       }
 
-      if (!calendarMovable(item.critical_terms)) {
+      const oldDate =
+        calendarIso(item.due_date);
+
+      const movingEarlier =
+        date < oldDate;
+
+      if (
+        !movingEarlier &&
+        !calendarMovable(item.critical_terms)
+      ) {
         await client.query("ROLLBACK");
 
         return res.status(409).json({
           ok: false,
-          error: "У договорі не підтверджено можливість перенесення"
+          error:
+            "За умовами договору перенесення платежу на пізніший період не передбачено"
         });
       }
 
       if (
         cents > Math.round(Number(item.amount) * 100) ||
-        date === calendarIso(item.due_date)
+        date === oldDate
       ) {
         await client.query("ROLLBACK");
 
