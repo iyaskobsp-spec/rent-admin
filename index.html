@@ -326,6 +326,10 @@
       <div id="calendarWeeklyPanel">
         <div id="calendarWeeklySummary" class="budget-summary"></div>
         <div class="calendar-weekly-actions">
+          <button id="calendarAddRow" type="button">
+            + Додати строчку
+          </button>
+
           <button id="calendarConfirmPlan" type="button">
             Підтвердити оплати згідно календарю
           </button>
@@ -3137,11 +3141,14 @@
 
       quotaInput.addEventListener("change", async () => {
         if (!calValid(quotaInput.value)) {
-          alert("Некоректна квота");
+          calSetMessage("Перевірте суму квоти.", true);
+          quotaInput.focus();
           return;
         }
 
         try {
+          calSetMessage("");
+
           await calRequest(
             `/api/calendar/quota/${monday}`,
             {
@@ -3161,7 +3168,7 @@
 
           await calLoad();
         } catch (error) {
-          alert(error.message);
+          calSetMessage(error.message, true);
         }
       });
 
@@ -3180,12 +3187,25 @@
       );
 
       const confirmButton = cal("calendarConfirmPlan");
+      const addRowButton = cal("calendarAddRow");
 
       confirmButton.hidden = Boolean(approval);
       confirmButton.disabled =
         !calCanWrite() ||
         quota === null ||
         !all.length;
+
+      addRowButton.hidden =
+        !calCanWrite() ||
+        Boolean(approval);
+
+      addRowButton.disabled =
+        !calCanWrite() ||
+        Boolean(approval);
+
+      addRowButton.onclick = () => {
+        calOpenAddWeeklyRow(monday, all);
+      };
 
       cal("calendarWeeklyPanel")
         .querySelectorAll(".calendar-approved-label")
@@ -3453,21 +3473,130 @@
         `Договорів до оплати: ${filtered.length}`;
 
       confirmButton.onclick = async () => {
-        if (!confirm(
-          "Підтвердити розподіл платежів на наступний тиждень?"
-        )) return;
-
         try {
+          confirmButton.disabled = true;
+
           await calRequest(
             `/api/calendar/week/${monday}/approve-plan`,
             { method: "POST" }
           );
 
           await calLoad();
+
+          calSetMessage(
+            "План оплат на тиждень підтверджено."
+          );
         } catch (error) {
-          alert(error.message);
+          calSetMessage(error.message, true);
+          confirmButton.disabled = false;
         }
       };
+    }
+
+    function calWeekLabelFromMonday(monday) {
+      const start = new Date(`${monday}T00:00:00Z`);
+      const end = new Date(start);
+
+      end.setUTCDate(end.getUTCDate() + 6);
+
+      const format = date =>
+        date.toLocaleDateString("uk-UA", {
+          timeZone: "UTC",
+          day: "2-digit",
+          month: "2-digit"
+        });
+
+      return `${format(start)} – ${format(end)}`;
+    }
+
+    function calPaymentDateForWeek(monday) {
+      const date = new Date(`${monday}T00:00:00Z`);
+
+      // Понеділок не платіжний.
+      // Для тижневого перенесення ставимо перший робочий
+      // платіжний день — вівторок.
+      date.setUTCDate(date.getUTCDate() + 1);
+
+      return date.toISOString().slice(0, 10);
+    }
+
+    function calFutureWeeks(monday, count = 12) {
+      const result = [];
+      const start = new Date(`${monday}T00:00:00Z`);
+
+      for (let index = 1; index <= count; index++) {
+        const date = new Date(start);
+
+        date.setUTCDate(
+          date.getUTCDate() + index * 7
+        );
+
+        const iso = date.toISOString().slice(0, 10);
+
+        result.push({
+          monday: iso,
+          label: calWeekLabelFromMonday(iso)
+        });
+      }
+
+      return result;
+    }
+
+    async function calMoveAmount(items, amount, targetDate) {
+      let remaining = calCents(amount);
+
+      const ordered = [...items].sort((a, b) =>
+        calIso(a.due_date).localeCompare(
+          calIso(b.due_date)
+        ) ||
+        Number(a.id) - Number(b.id)
+      );
+
+      for (const item of ordered) {
+        if (remaining <= 0) break;
+
+        const available = calCents(item.amount);
+        const move = Math.min(
+          remaining,
+          available
+        );
+
+        if (move <= 0) continue;
+
+        await calRequest(
+          `/api/calendar/items/${item.id}/move`,
+          {
+            method: "POST",
+            body: JSON.stringify({
+              amount: (move / 100).toFixed(2),
+              date: targetDate
+            })
+          }
+        );
+
+        remaining -= move;
+      }
+
+      if (remaining > 0) {
+        throw new Error(
+          "Сума перенесення перевищує доступний платіж."
+        );
+      }
+    }
+
+    async function calReallocateWeek(monday) {
+      const hasQuota = (calData.quotas || []).some(
+        item => calIso(item.week_start) === monday
+      );
+
+      if (!hasQuota) return;
+
+      await calRequest(
+        `/api/calendar/week/${monday}/allocate`,
+        {
+          method: "POST"
+        }
+      );
     }
 
     function calOpenWeeklyEditor(record, monday) {
@@ -3476,98 +3605,746 @@
       const dialog = document.createElement("div");
       dialog.className = "calendar-quick-overlay";
 
-      const card = calEl("section", "calendar-quick-dialog");
-
-      card.append(
-        calEl("h2", "", `Редагування платежів · ${id}`)
+      const card = calEl(
+        "section",
+        "calendar-quick-dialog"
       );
 
       card.append(
         calEl(
-          "p",
-          "calendar-quick-note",
-          "Платежі взято з бюджету. Змініть тільки ті, " +
-          "для яких потрібно скоригувати розподіл чи дату."
+          "h2",
+          "",
+          `Редагування платежу · ${id}`
         )
       );
 
-      const entries = [];
+      const message = calEl(
+        "p",
+        "budget-message calendar-quick-message",
+        ""
+      );
 
-      for (const payment of payments) {
-        const row = calEl("div", "calendar-quick-row");
+      const totals = {
+        f1: payments
+          .filter(item => item.form === "f1")
+          .reduce(
+            (sum, item) =>
+              sum + Number(item.amount),
+            0
+          ),
 
-        row.append(
+        f2: payments
+          .filter(item => item.form === "f2")
+          .reduce(
+            (sum, item) =>
+              sum + Number(item.amount),
+            0
+          )
+      };
+
+      const movable = {
+        f1: payments.filter(
+          item =>
+            item.form === "f1" &&
+            calMovable(item)
+        ),
+
+        f2: payments.filter(
+          item =>
+            item.form === "f2" &&
+            calMovable(item)
+        )
+      };
+
+      const movableTotals = {
+        f1: movable.f1.reduce(
+          (sum, item) =>
+            sum + Number(item.amount),
+          0
+        ),
+
+        f2: movable.f2.reduce(
+          (sum, item) =>
+            sum + Number(item.amount),
+          0
+        )
+      };
+
+      const rows = calEl(
+        "div",
+        "calendar-quick-form"
+      );
+
+      const inputs = {};
+
+      for (const form of ["f1", "f2"]) {
+        const row = calEl(
+          "div",
+          "calendar-quick-row"
+        );
+
+        const info = calEl(
+          "div",
+          "calendar-quick-payment-info"
+        );
+
+        info.append(
           calEl(
             "strong",
             "",
-            `${payment.form.toUpperCase()} · ${calMoney(payment.amount)}`
+            form.toUpperCase()
+          ),
+          calEl(
+            "span",
+            "",
+            `Зараз на тиждень: ${calMoney(totals[form])}`
           )
         );
 
         const label = calEl("label");
-        label.textContent = "До оплати за квотою";
 
-        const input = calEl("input");
+        label.append(
+          calEl(
+            "span",
+            "",
+            `Перенести ${form.toUpperCase()}, грн`
+          )
+        );
+
+        const input = calEl(
+          "input",
+          "calendar-money-input"
+        );
+
         input.type = "number";
         input.min = "0";
         input.step = "0.01";
-        input.value = Number(payment.funded).toFixed(2);
+        input.value = "0.00";
+
+        input.max =
+          movableTotals[form].toFixed(2);
+
+        input.disabled =
+          movableTotals[form] <= 0;
 
         label.append(input);
-        row.append(label);
 
-        if (calMovable(payment)) {
-          row.append(
-            calMakeButton("Перенести всю / частину", () => {
-              dialog.remove();
-              calOpenMove(payment);
-            })
+        if (movableTotals[form] <= 0) {
+          label.append(
+            calEl(
+              "small",
+              "",
+              totals[form] > 0
+                ? "Перенесення за договором не передбачено"
+                : "Платежу немає"
+            )
           );
         }
 
-        card.append(row);
-        entries.push({ payment, input });
+        row.append(info, label);
+        rows.append(row);
+
+        inputs[form] = input;
       }
 
-      const actions = calEl("div", "calendar-quick-actions");
+      const weekLabel = calEl("label");
+      weekLabel.className =
+        "calendar-quick-target";
 
-      actions.append(
-        calMakeButton("Скасувати", () => dialog.remove())
+      weekLabel.append(
+        calEl("span", "", "На який тиждень")
+      );
+
+      const weekSelect =
+        document.createElement("select");
+
+      for (
+        const week of calFutureWeeks(monday)
+      ) {
+        weekSelect.append(
+          new Option(
+            week.label,
+            week.monday
+          )
+        );
+      }
+
+      weekLabel.append(weekSelect);
+
+      card.append(
+        rows,
+        weekLabel,
+        message
+      );
+
+      const actions = calEl(
+        "div",
+        "calendar-quick-actions"
       );
 
       actions.append(
-        calMakeButton("Зберегти", async () => {
-          const changed = entries.filter(({ payment, input }) =>
-            calCents(input.value) !== calCents(payment.funded)
-          );
+        calMakeButton(
+          "Скасувати",
+          () => dialog.remove()
+        )
+      );
 
-          if (changed.some(({ payment, input }) =>
-            !calValid(input.value) ||
-            calCents(input.value) > calCents(payment.amount)
-          )) {
-            alert("Перевірте суми");
-            return;
-          }
+      actions.append(
+        calMakeButton(
+          "Зберегти",
+          async () => {
+            const f1 =
+              Number(inputs.f1.value || 0);
 
-          try {
-            for (const { payment, input } of changed) {
-              await calRequest(
-                `/api/calendar/items/${payment.id}/funded`,
-                {
-                  method: "PATCH",
-                  body: JSON.stringify({
-                    amount: input.value
-                  })
-                }
-              );
+            const f2 =
+              Number(inputs.f2.value || 0);
+
+            message.textContent = "";
+            message.classList.remove("is-error");
+
+            if (
+              !Number.isFinite(f1) ||
+              !Number.isFinite(f2) ||
+              f1 < 0 ||
+              f2 < 0
+            ) {
+              message.textContent =
+                "Перевірте суми.";
+              message.classList.add("is-error");
+              return;
             }
 
-            dialog.remove();
-            await calLoad();
-          } catch (error) {
-            alert(error.message);
+            if (
+              calCents(f1) >
+                calCents(movableTotals.f1) ||
+              calCents(f2) >
+                calCents(movableTotals.f2)
+            ) {
+              message.textContent =
+                "Сума перенесення більша за доступну.";
+              message.classList.add("is-error");
+              return;
+            }
+
+            if (
+              calCents(f1) === 0 &&
+              calCents(f2) === 0
+            ) {
+              message.textContent =
+                "Вкажіть суму Ф1 або Ф2.";
+              message.classList.add("is-error");
+              return;
+            }
+
+            const targetDate =
+              calPaymentDateForWeek(
+                weekSelect.value
+              );
+
+            try {
+              message.textContent =
+                "Зберігаємо...";
+
+              if (calCents(f1) > 0) {
+                await calMoveAmount(
+                  movable.f1,
+                  f1,
+                  targetDate
+                );
+              }
+
+              if (calCents(f2) > 0) {
+                await calMoveAmount(
+                  movable.f2,
+                  f2,
+                  targetDate
+                );
+              }
+
+              await calReallocateWeek(monday);
+
+              dialog.remove();
+              await calLoad();
+
+              calSetMessage(
+                "Платіжний календар оновлено."
+              );
+            } catch (error) {
+              message.textContent =
+                error.message;
+              message.classList.add("is-error");
+            }
           }
-        })
+        )
+      );
+
+      card.append(actions);
+      dialog.append(card);
+      document.body.append(dialog);
+    }
+
+    function calOpenAddWeeklyRow(
+      monday,
+      currentItems
+    ) {
+      const dialog =
+        document.createElement("div");
+
+      dialog.className =
+        "calendar-quick-overlay";
+
+      const card = calEl(
+        "section",
+        "calendar-quick-dialog"
+      );
+
+      card.append(
+        calEl(
+          "h2",
+          "",
+          "Додати платіж на наступний тиждень"
+        )
+      );
+
+      const currentContracts = new Set(
+        currentItems.map(
+          item => item.contract_id
+        )
+      );
+
+      const afterWeek = new Date(
+        `${monday}T00:00:00Z`
+      );
+
+      afterWeek.setUTCDate(
+        afterWeek.getUTCDate() + 7
+      );
+
+      const afterWeekIso =
+        afterWeek.toISOString().slice(0, 10);
+
+      const futureItems =
+        (calData.items || []).filter(item =>
+          Number(item.amount) > 0 &&
+          !item.confirmed_at &&
+          calIso(item.due_date) >=
+            afterWeekIso &&
+          !currentContracts.has(
+            item.contract_id
+          )
+        );
+
+      const byContract = new Map();
+
+      for (const item of futureItems) {
+        if (
+          !byContract.has(
+            item.contract_id
+          )
+        ) {
+          byContract.set(
+            item.contract_id,
+            []
+          );
+        }
+
+        byContract
+          .get(item.contract_id)
+          .push(item);
+      }
+
+      const message = calEl(
+        "p",
+        "budget-message calendar-quick-message",
+        ""
+      );
+
+      if (!byContract.size) {
+        card.append(
+          calEl(
+            "p",
+            "calendar-quick-note",
+            "Немає майбутніх планових платежів, " +
+            "які можна перенести на цей тиждень."
+          )
+        );
+
+        const actions = calEl(
+          "div",
+          "calendar-quick-actions"
+        );
+
+        actions.append(
+          calMakeButton(
+            "Закрити",
+            () => dialog.remove()
+          )
+        );
+
+        card.append(actions);
+        dialog.append(card);
+        document.body.append(dialog);
+        return;
+      }
+
+      const lines = new Map(
+        (calData.lines || []).map(line => [
+          line.contract_id,
+          line
+        ])
+      );
+
+      const contractLabel =
+        calEl(
+          "label",
+          "calendar-quick-target"
+        );
+
+      contractLabel.append(
+        calEl(
+          "span",
+          "",
+          "Договір / об'єкт"
+        )
+      );
+
+      const contractSelect =
+        document.createElement("select");
+
+      contractSelect.append(
+        new Option(
+          "Оберіть договір",
+          ""
+        )
+      );
+
+      const contractIds =
+        [...byContract.keys()].sort(
+          (a, b) => {
+            const left =
+              lines.get(a)?.tt_code || a;
+
+            const right =
+              lines.get(b)?.tt_code || b;
+
+            return String(left)
+              .localeCompare(
+                String(right),
+                "uk",
+                { numeric: true }
+              );
+          }
+        );
+
+      for (const contractId of contractIds) {
+        const line =
+          lines.get(contractId) ||
+          byContract.get(contractId)[0];
+
+        contractSelect.append(
+          new Option(
+            [
+              line.tt_code,
+              contractId,
+              line.object_name
+            ].filter(Boolean).join(" · "),
+            contractId
+          )
+        );
+      }
+
+      contractLabel.append(contractSelect);
+
+      const formHost =
+        calEl(
+          "div",
+          "calendar-quick-form"
+        );
+
+      const controls = {};
+
+      function renderForms() {
+        formHost.replaceChildren();
+
+        const contractId =
+          contractSelect.value;
+
+        controls.f1 = null;
+        controls.f2 = null;
+
+        if (!contractId) return;
+
+        const items =
+          byContract.get(contractId) || [];
+
+        for (const form of ["f1", "f2"]) {
+          const formItems = items
+            .filter(
+              item =>
+                item.form === form
+            )
+            .sort(
+              (a, b) =>
+                calIso(a.due_date)
+                  .localeCompare(
+                    calIso(b.due_date)
+                  )
+            );
+
+          const row = calEl(
+            "div",
+            "calendar-quick-row"
+          );
+
+          row.append(
+            calEl(
+              "strong",
+              "",
+              form.toUpperCase()
+            )
+          );
+
+          const sourceLabel =
+            calEl("label");
+
+          sourceLabel.append(
+            calEl(
+              "span",
+              "",
+              "З якого тижня"
+            )
+          );
+
+          const sourceSelect =
+            document.createElement("select");
+
+          sourceSelect.append(
+            new Option(
+              "Не переносити",
+              ""
+            )
+          );
+
+          for (const item of formItems) {
+            const sourceMonday =
+              calMonday(
+                calIso(item.due_date)
+              );
+
+            sourceSelect.append(
+              new Option(
+                `${calWeekLabelFromMonday(
+                  sourceMonday
+                )} · ${calMoney(item.amount)}`,
+                String(item.id)
+              )
+            );
+          }
+
+          sourceLabel.append(sourceSelect);
+
+          const amountLabel =
+            calEl("label");
+
+          amountLabel.append(
+            calEl(
+              "span",
+              "",
+              "Сума, грн"
+            )
+          );
+
+          const amountInput =
+            calEl(
+              "input",
+              "calendar-money-input"
+            );
+
+          amountInput.type = "number";
+          amountInput.min = "0";
+          amountInput.step = "0.01";
+          amountInput.value = "0.00";
+          amountInput.disabled = true;
+
+          sourceSelect.addEventListener(
+            "change",
+            () => {
+              const item =
+                formItems.find(
+                  row =>
+                    String(row.id) ===
+                    sourceSelect.value
+                );
+
+              if (!item) {
+                amountInput.value =
+                  "0.00";
+                amountInput.disabled =
+                  true;
+                return;
+              }
+
+              amountInput.disabled =
+                false;
+
+              amountInput.max =
+                Number(
+                  item.amount
+                ).toFixed(2);
+
+              amountInput.value =
+                Number(
+                  item.amount
+                ).toFixed(2);
+            }
+          );
+
+          amountLabel.append(amountInput);
+
+          row.append(
+            sourceLabel,
+            amountLabel
+          );
+
+          formHost.append(row);
+
+          controls[form] = {
+            items: formItems,
+            select: sourceSelect,
+            input: amountInput
+          };
+        }
+      }
+
+      contractSelect.addEventListener(
+        "change",
+        renderForms
+      );
+
+      card.append(
+        contractLabel,
+        formHost,
+        message
+      );
+
+      const actions = calEl(
+        "div",
+        "calendar-quick-actions"
+      );
+
+      actions.append(
+        calMakeButton(
+          "Скасувати",
+          () => dialog.remove()
+        )
+      );
+
+      actions.append(
+        calMakeButton(
+          "Додати",
+          async () => {
+            message.textContent = "";
+            message.classList.remove("is-error");
+
+            const moves = [];
+
+            for (
+              const form of ["f1", "f2"]
+            ) {
+              const control =
+                controls[form];
+
+              if (
+                !control ||
+                !control.select.value
+              ) {
+                continue;
+              }
+
+              const item =
+                control.items.find(
+                  row =>
+                    String(row.id) ===
+                    control.select.value
+                );
+
+              const amount =
+                Number(
+                  control.input.value
+                );
+
+              if (
+                !item ||
+                !Number.isFinite(amount) ||
+                amount <= 0 ||
+                calCents(amount) >
+                  calCents(item.amount)
+              ) {
+                message.textContent =
+                  `Перевірте суму ${form.toUpperCase()}.`;
+
+                message.classList.add(
+                  "is-error"
+                );
+
+                return;
+              }
+
+              moves.push({
+                item,
+                amount
+              });
+            }
+
+            if (!moves.length) {
+              message.textContent =
+                "Оберіть Ф1 або Ф2.";
+              message.classList.add("is-error");
+              return;
+            }
+
+            const targetDate =
+              calPaymentDateForWeek(monday);
+
+            try {
+              message.textContent =
+                "Додаємо платіж...";
+
+              for (
+                const { item, amount }
+                of moves
+              ) {
+                await calRequest(
+                  `/api/calendar/items/${item.id}/move`,
+                  {
+                    method: "POST",
+                    body: JSON.stringify({
+                      amount:
+                        amount.toFixed(2),
+                      date: targetDate
+                    })
+                  }
+                );
+              }
+
+              await calReallocateWeek(monday);
+
+              dialog.remove();
+              await calLoad();
+
+              calSetMessage(
+                "Платіж додано на активний тиждень."
+              );
+            } catch (error) {
+              message.textContent =
+                error.message;
+
+              message.classList.add(
+                "is-error"
+              );
+            }
+          }
+        )
       );
 
       card.append(actions);
@@ -3952,7 +4729,7 @@
           calCloseMove();
           await calLoad();
         } catch (error) {
-          alert(error.message);
+          calSetMessage(error.message, true);
         }
       }
     );
