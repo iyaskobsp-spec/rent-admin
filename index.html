@@ -189,10 +189,37 @@
       </p>
 
       <div class="budget-toolbar">
-        <label class="budget-month-field">
+        <div class="budget-month-field">
           <span>Місяць бюджету</span>
-          <input id="budgetMonth" type="month">
-        </label>
+
+          <div class="rent-month-picker">
+            <input id="budgetMonth" type="hidden">
+
+            <button class="rent-month-trigger"
+                    type="button"
+                    data-month-trigger>
+              <span data-month-value>Оберіть місяць</span>
+              <span class="rent-month-icon" aria-hidden="true"></span>
+            </button>
+
+            <div class="rent-month-panel" data-month-panel hidden>
+              <div class="rent-month-header">
+                <button type="button"
+                        class="rent-month-arrow"
+                        data-month-prev>‹</button>
+
+                <strong data-month-year></strong>
+
+                <button type="button"
+                        class="rent-month-arrow"
+                        data-month-next>›</button>
+              </div>
+
+              <div class="rent-month-grid"
+                   data-month-grid></div>
+            </div>
+          </div>
+        </div>
 
         <span id="budgetStatus" class="budget-status">
           Не сформований
@@ -285,10 +312,37 @@
       </p>
 
       <div class="budget-toolbar calendar-toolbar">
-        <label class="budget-month-field">
+        <div class="budget-month-field">
           <span>Місяць</span>
-          <input id="calendarMonth" type="month">
-        </label>
+
+          <div class="rent-month-picker">
+            <input id="calendarMonth" type="hidden">
+
+            <button class="rent-month-trigger"
+                    type="button"
+                    data-month-trigger>
+              <span data-month-value>Оберіть місяць</span>
+              <span class="rent-month-icon" aria-hidden="true"></span>
+            </button>
+
+            <div class="rent-month-panel" data-month-panel hidden>
+              <div class="rent-month-header">
+                <button type="button"
+                        class="rent-month-arrow"
+                        data-month-prev>‹</button>
+
+                <strong data-month-year></strong>
+
+                <button type="button"
+                        class="rent-month-arrow"
+                        data-month-next>›</button>
+              </div>
+
+              <div class="rent-month-grid"
+                   data-month-grid></div>
+            </div>
+          </div>
+        </div>
 
         <div class="budget-toolbar-actions">
           <span id="calendarBudgetStatus" class="budget-status">
@@ -1943,7 +1997,300 @@
       return `${year}-${month}`;
     }
 
+    const RENT_MONTH_NAMES = [
+      "Січень",
+      "Лютий",
+      "Березень",
+      "Квітень",
+      "Травень",
+      "Червень",
+      "Липень",
+      "Серпень",
+      "Вересень",
+      "Жовтень",
+      "Листопад",
+      "Грудень"
+    ];
+
+    const RENT_MONTH_MIN_YEAR = 2025;
+    const RENT_MONTH_MAX_YEAR =
+      new Date().getFullYear() + 2;
+
+    function rentMonthParts(value) {
+      const match = String(value || "").match(
+        /^(\d{4})-(\d{2})$/
+      );
+
+      if (!match) return null;
+
+      return {
+        year: Number(match[1]),
+        month: Number(match[2])
+      };
+    }
+
+    function rentSyncMonthPicker(inputId) {
+      const input =
+        document.querySelector(`#${inputId}`);
+
+      const root =
+        input.closest(".rent-month-picker");
+
+      if (!root) return;
+
+      const value =
+        root.querySelector("[data-month-value]");
+
+      const parts =
+        rentMonthParts(input.value);
+
+      value.textContent = parts
+        ? `${RENT_MONTH_NAMES[parts.month - 1]} ${parts.year}`
+        : "Оберіть місяць";
+
+      if (root._rentMonthRender) {
+        root._rentMonthRender(
+          parts?.year || new Date().getFullYear()
+        );
+      }
+    }
+
+    function rentSetMonthPickerDisabled(
+      inputId,
+      disabled
+    ) {
+      const input =
+        document.querySelector(`#${inputId}`);
+
+      const root =
+        input.closest(".rent-month-picker");
+
+      if (!root) return;
+
+      input.disabled = disabled;
+
+      const trigger =
+        root.querySelector("[data-month-trigger]");
+
+      trigger.disabled = disabled;
+
+      root.classList.toggle(
+        "is-disabled",
+        disabled
+      );
+
+      if (disabled) {
+        root.querySelector(
+          "[data-month-panel]"
+        ).hidden = true;
+      }
+    }
+
+    function rentInitMonthPicker(inputId) {
+      const input =
+        document.querySelector(`#${inputId}`);
+
+      const root =
+        input.closest(".rent-month-picker");
+
+      const trigger =
+        root.querySelector("[data-month-trigger]");
+
+      const panel =
+        root.querySelector("[data-month-panel]");
+
+      const yearLabel =
+        root.querySelector("[data-month-year]");
+
+      const grid =
+        root.querySelector("[data-month-grid]");
+
+      const prev =
+        root.querySelector("[data-month-prev]");
+
+      const next =
+        root.querySelector("[data-month-next]");
+
+      let viewYear =
+        rentMonthParts(input.value)?.year ||
+        new Date().getFullYear();
+
+      function render(year = viewYear) {
+        viewYear = Math.min(
+          RENT_MONTH_MAX_YEAR,
+          Math.max(RENT_MONTH_MIN_YEAR, year)
+        );
+
+        yearLabel.textContent = viewYear;
+
+        prev.disabled =
+          viewYear <= RENT_MONTH_MIN_YEAR;
+
+        next.disabled =
+          viewYear >= RENT_MONTH_MAX_YEAR;
+
+        grid.replaceChildren();
+
+        const selected =
+          rentMonthParts(input.value);
+
+        RENT_MONTH_NAMES.forEach(
+          (name, index) => {
+            const month = index + 1;
+
+            const button =
+              document.createElement("button");
+
+            button.type = "button";
+            button.className =
+              "rent-month-option";
+
+            button.textContent =
+              name.slice(0, 3);
+
+            if (
+              selected &&
+              selected.year === viewYear &&
+              selected.month === month
+            ) {
+              button.classList.add(
+                "is-selected"
+              );
+            }
+
+            const current = new Date();
+
+            if (
+              current.getFullYear() === viewYear &&
+              current.getMonth() + 1 === month
+            ) {
+              button.classList.add(
+                "is-current"
+              );
+            }
+
+            button.addEventListener(
+              "click",
+              () => {
+                input.value =
+                  `${viewYear}-${String(month)
+                    .padStart(2, "0")}`;
+
+                rentSyncMonthPicker(inputId);
+
+                panel.hidden = true;
+                trigger.setAttribute(
+                  "aria-expanded",
+                  "false"
+                );
+
+                input.dispatchEvent(
+                  new Event(
+                    "change",
+                    { bubbles: true }
+                  )
+                );
+              }
+            );
+
+            grid.append(button);
+          }
+        );
+      }
+
+      root._rentMonthRender = render;
+
+      trigger.addEventListener(
+        "click",
+        event => {
+          event.stopPropagation();
+
+          if (trigger.disabled) return;
+
+          const opening = panel.hidden;
+
+          document
+            .querySelectorAll(
+              ".rent-month-panel"
+            )
+            .forEach(item => {
+              item.hidden = true;
+            });
+
+          panel.hidden = !opening;
+
+          trigger.setAttribute(
+            "aria-expanded",
+            String(opening)
+          );
+
+          if (opening) {
+            const selected =
+              rentMonthParts(input.value);
+
+            render(
+              selected?.year ||
+              new Date().getFullYear()
+            );
+          }
+        }
+      );
+
+      prev.addEventListener(
+        "click",
+        event => {
+          event.stopPropagation();
+          render(viewYear - 1);
+        }
+      );
+
+      next.addEventListener(
+        "click",
+        event => {
+          event.stopPropagation();
+          render(viewYear + 1);
+        }
+      );
+
+      panel.addEventListener(
+        "click",
+        event => event.stopPropagation()
+      );
+
+      render();
+      rentSyncMonthPicker(inputId);
+    }
+
+    document.addEventListener(
+      "click",
+      () => {
+        document
+          .querySelectorAll(
+            ".rent-month-panel"
+          )
+          .forEach(panel => {
+            panel.hidden = true;
+          });
+
+        document
+          .querySelectorAll(
+            ".rent-month-trigger"
+          )
+          .forEach(trigger => {
+            trigger.setAttribute(
+              "aria-expanded",
+              "false"
+            );
+          });
+      }
+    );
+
     budgetMonthInput.value = budgetUserMonth();
+
+    rentInitMonthPicker("budgetMonth");
+    rentInitMonthPicker("calendarMonth");
+
+    rentSyncMonthPicker("budgetMonth");
 
     function budgetSetMessage(text, error = false) {
       budgetMessage.textContent = text;
@@ -4635,23 +4982,36 @@
       cal("calendarExpand").hidden = weekly;
       cal("calendarCollapse").hidden = weekly;
 
-      cal("calendarMonth").disabled = weekly;
+      rentSetMonthPickerDisabled(
+        "calendarMonth",
+        weekly
+      );
 
       if (weekly) {
-        const nextMonth = calNextWeekStart().slice(0, 7);
+        const nextMonth =
+          calNextWeekStart().slice(0, 7);
 
-        cal("calendarMonth").value = nextMonth;
+        cal("calendarMonth").value =
+          nextMonth;
+
+        rentSyncMonthPicker(
+          "calendarMonth"
+        );
+
         calExpanded.clear();
 
         await calLoad();
         return;
       }
 
-      cal("calendarMonth").disabled = false;
-
       if (!cal("calendarMonth").value) {
-        cal("calendarMonth").value = budgetUserMonth();
+        cal("calendarMonth").value =
+          budgetUserMonth();
       }
+
+      rentSyncMonthPicker(
+        "calendarMonth"
+      );
 
       await calLoad();
     }
@@ -4808,6 +5168,9 @@
         budgetModule.hidden = false;
 
         budgetMonthInput.value ||= budgetUserMonth();
+
+        rentSyncMonthPicker("budgetMonth");
+
         await budgetLoad();
       }
     );
@@ -4831,8 +5194,11 @@
 
       if (budgetDirty.size &&
           !confirm("Є незбережені зміни. Змінити місяць?")) {
-        event.target.value = budgetData?.budget?.budget_month ||
+        event.target.value =
+          budgetData?.budget?.budget_month ||
           budgetUserMonth();
+
+        rentSyncMonthPicker("budgetMonth");
         return;
       }
 
