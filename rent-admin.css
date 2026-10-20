@@ -1827,9 +1827,19 @@ button.module-card:hover {
   text-align: center;
 }
 
-#calendarBudgetTable thead tr:nth-child(2) th {
+#calendarBudgetTable thead {
   position: sticky;
-  top: 210px;
+  top: 0;
+  z-index: 7;
+}
+
+#calendarBudgetTable thead th {
+  top: auto;
+}
+
+#calendarBudgetTable thead tr:nth-child(2) th {
+  position: relative;
+  top: auto;
   background: #f3f7fb;
 }
 
